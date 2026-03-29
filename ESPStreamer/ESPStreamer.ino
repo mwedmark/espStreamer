@@ -186,26 +186,78 @@ void handleRoot() {
 const pal = [0, 85, 170, 255];
 let running = true;
 
+// Convert linear 2bpp buffer (row-by-row) to C64 character cell bitmap layout
+// C64 bitmap: (charRow * 40 + charCol) * 8 + (y % 8), where charCol = x/4, charRow = y/8
+function linearToC64(linear) {
+  const c64 = new Uint8Array(8000);
+  for (let y = 0; y < 200; y++) {
+    for (let xByte = 0; xByte < 40; xByte++) {
+      // Each byte covers 4 pixels (2bpp)
+      // Linear index: row y, byte position xByte
+      let linIdx = y * 40 + xByte;
+      // C64 index: character cell layout
+      let charRow = Math.floor(y / 8);
+      let charCol = xByte;
+      let c64Idx = (charRow * 40 + charCol) * 8 + (y % 8);
+      c64[c64Idx] = linear[linIdx];
+    }
+  }
+  return c64;
+}
+
 async function save(t) {
   const r = await fetch('/data?t=' + Date.now());
   const d = new Uint8Array(await r.arrayBuffer());
+  const bmp = linearToC64(d);  // Convert to C64 bitmap layout
   let f;
   if (t === 'KOA') {
     f = new Uint8Array(10003);
     f[0] = 0; f[1] = 0x60;
-    f.set(d, 2);
+    f.set(bmp, 2);
     for (let i = 8002; i < 9002; i++) f[i] = 0xBC;
     for (let i = 9002; i < 10002; i++) f[i] = 1;
     download(f, 'img.koa');
   } else {
-    f = new Uint8Array(10044);
-    f[0] = 1; f[1] = 8;
+    // Generate self-displaying PRG that loads at $0801
+    // Total size: 2 bytes (load address) + 14143 bytes payload
+    f = new Uint8Array(14145);
+    f[0] = 1; f[1] = 8; // Load address $0801
+    
+    // BASIC Stub: 10 SYS 2061 (at $0801)
     f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
-    f.set([0x78,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,0xD8,0x8D,0x16,0xD0,0xA9,0x18,0x8D,0x18,0xD0,
-           0xA9,0,0x8D,0x20,0xD0,0xA9,0,0x8D,0x21,0xD0,0x4C,0x1D,0x08], 14);
-    f.set(d, 44);
-    for (let i = 8044; i < 9044; i++) f[i] = 0xBC;
-    for (let i = 9044; i < 10044; i++) f[i] = 1;
+    
+    // Machine Code (at $080D, offset 14)
+    const prgAsm = [
+      0x78, // SEI
+      0xA9, 0x3B, 0x8D, 0x11, 0xD0, // LDA #$3B, STA $D011
+      0xA9, 0xD8, 0x8D, 0x16, 0xD0, // LDA #$D8, STA $D016
+      0xA9, 0x18, 0x8D, 0x18, 0xD0, // LDA #$18, STA $D018 (Screen $0400, Bitmap $2000)
+      0xA9, 0x00, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0, // LDA #0, STA bd/bg
+      0xA2, 0x00, // LDX #0
+      0xBD, 0x70, 0x08, 0x9D, 0x00, 0x04, // LDA $0870,X -> STA $0400,X
+      0xBD, 0x6A, 0x09, 0x9D, 0xFA, 0x04, // LDA $096A,X -> STA $04FA,X
+      0xBD, 0x64, 0x0A, 0x9D, 0xF4, 0x05, // LDA $0A64,X -> STA $05F4,X
+      0xBD, 0x5E, 0x0B, 0x9D, 0xEE, 0x06, // LDA $0B5E,X -> STA $06EE,X
+      0xE8, 0xE0, 0xFA, 0xD0, 0xE3, // INX, CPX #250, BNE
+      0xA2, 0x00, // LDX #0
+      0xBD, 0x58, 0x0C, 0x9D, 0x00, 0xD8, // LDA $0C58,X -> STA $D800,X
+      0xBD, 0x52, 0x0D, 0x9D, 0xFA, 0xD8, // LDA $0D52,X -> STA $D8FA,X
+      0xBD, 0x4C, 0x0E, 0x9D, 0xF4, 0xD9, // LDA $0E4C,X -> STA $D9F4,X
+      0xBD, 0x46, 0x0F, 0x9D, 0xEE, 0xDA, // LDA $0F46,X -> STA $DAEE,X
+      0xE8, 0xE0, 0xFA, 0xD0, 0xE3, // INX, CPX #250, BNE
+      0x4C, 0x63, 0x08 // JMP $0863
+    ];
+    f.set(prgAsm, 14);
+    
+    // Screen RAM source data (at $0870, offset 113)
+    for (let i = 113; i < 1113; i++) f[i] = 0xBC;
+    
+    // Color RAM source data (at $0C58, offset 1113)
+    for (let i = 1113; i < 2113; i++) f[i] = 1;
+    
+    // Bitmap Data (at $2000, offset 6145)
+    f.set(bmp, 6145);
+    
     download(f, 'v.prg');
   }
 }
