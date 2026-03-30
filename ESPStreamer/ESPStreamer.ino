@@ -28,6 +28,7 @@ volatile uint32_t frameCount = 0;
 volatile uint32_t lastFrameSize = 0;
 volatile uint32_t lastDecodeResult = 0;
 volatile uint32_t nonZeroPixels = 0;
+volatile uint64_t totalBytes = 0;
 
 // --- Image Adjustments ---
 float imgContrast = 1.0f;
@@ -174,7 +175,8 @@ void handleStats() {
                 ",\"connected\":" + String(streamConnected ? 1 : 0) +
                 ",\"hires\":" + String(hiResMode ? 1 : 0) +
                 ",\"contrast\":" + String(imgContrast, 2) +
-                ",\"scale\":" + String(jpgScale) + "}";
+                ",\"scale\":" + String(jpgScale) +
+                ",\"totalKB\":" + String((uint32_t)(totalBytes / 1024)) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
 }
@@ -348,6 +350,12 @@ const palMC = [0, 85, 170, 255];  // 4-level grey for multicolor
 let running = true;
 let isHires = false;  // mirrors ESP32 mode
 
+let lastStatsTime = 0;
+let lastFrames = 0;
+let lastKB = 0;
+let currentFPS = 0;
+let currentKBs = 0;
+
 // --- Canvas resize helper ---
 function resizeCanvas(hires) {
   const cv = document.getElementById('c');
@@ -499,14 +507,31 @@ async function upd() {
       if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) {
         document.getElementById('scale').value = s.scale;
       }
+
+      const now = Date.now();
+      if (lastStatsTime > 0) {
+        const dt = (now - lastStatsTime) / 1000.0;
+        if (dt >= 1.0) { // Update rates ~every 1 sec
+          currentFPS = ((s.frames - lastFrames) / dt).toFixed(1);
+          currentKBs = ((s.totalKB - lastKB) / dt).toFixed(1);
+          lastStatsTime = now;
+          lastFrames = s.frames;
+          lastKB = s.totalKB;
+        }
+      } else {
+        lastStatsTime = now;
+        lastFrames = s.frames;
+        lastKB = s.totalKB;
+      }
+
       const dot  = document.getElementById('dot');
       const stxt = document.getElementById('stxt');
       dot.className = s.connected ? 'dot on' : 'dot';
       stxt.innerHTML =
-        'Stream: ' + (s.connected ? '<span class="val">LIVE</span>' : '<span class="err">DISCONNECTED</span>') +
-        ' &nbsp;|&nbsp; Frames: <span class="val">' + s.frames + '</span>' +
-        ' &nbsp;|&nbsp; Last: <span class="val">' + s.lastSize + ' B</span>' +
-        ' &nbsp;|&nbsp; Buffer: <span class="val">' + s.nonZero + '/8000</span>';
+        'Status: ' + (s.connected ? '<span class="val">LIVE</span>' : '<span class="err">DISCONNECTED</span>') +
+        ' &nbsp;|&nbsp; FPS: <span class="val">' + Math.max(0, currentFPS) + '</span>' +
+        ' &nbsp;|&nbsp; <span class="val">' + Math.max(0, currentKBs) + '</span> KB/s' +
+        ' &nbsp;|&nbsp; Total: <span class="val">' + s.totalKB + '</span> KB';
     }
 
     const r = await fetch('/data?t=' + Date.now());
@@ -796,6 +821,7 @@ void loop() {
 
     if (frameSize > 0) {
       lastFrameSize = frameSize;
+      totalBytes += frameSize;
 
       // Debug: print first 8 bytes of JPEG
       Serial.printf("[MJPG] Frame %d: %d bytes, header: ", frameCount + 1, frameSize);
