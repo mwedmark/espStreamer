@@ -31,7 +31,9 @@ volatile uint32_t nonZeroPixels = 0;
 
 // --- Image Adjustments ---
 float imgContrast = 1.0f;
+uint8_t jpgScale = 1;
 uint16_t currentJpgWidth = 320;
+uint16_t currentJpgHeight = 200;
 
 // Bayer 4x4 dither matrix
 const int8_t bayer4x4[4][4] = {
@@ -80,30 +82,29 @@ inline void drawMultiColorPixel(int x, int y, int16_t gray) {
 
 // TJpg_Decoder callback - converts decoded pixels to C64 bitmap format
 bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
+  if (currentJpgWidth == 0 || currentJpgHeight == 0) return true;
+
+  int targetW = hiResMode ? 320 : 160;
+  int targetH = 200;
+
   for (int j = 0; j < h; j++) {
     for (int i = 0; i < w; i++) {
       int currX = x + i;
       int currY = y + j;
 
-      if (hiResMode) {
-        if (currentJpgWidth <= 160) {
-          int16_t gray = get_gray(bitmap[i + j * w]);
-          drawHiResPixel(currX * 2, currY, gray);
-          drawHiResPixel(currX * 2 + 1, currY, gray);
-        } else {
-          int16_t gray = get_gray(bitmap[i + j * w]);
-          drawHiResPixel(currX, currY, gray);
-        }
-      } else {
-        if (currentJpgWidth >= 320) {
-          // Downscale by skipping odd pixels and averaging
-          if (currX % 2 != 0) continue;
-          int16_t gray1 = get_gray(bitmap[i + j * w]);
-          int16_t gray2 = (i + 1 < w) ? get_gray(bitmap[i + 1 + j * w]) : gray1;
-          drawMultiColorPixel(currX / 2, currY, (gray1 + gray2) / 2);
-        } else {
-          int16_t gray = get_gray(bitmap[i + j * w]);
-          drawMultiColorPixel(currX, currY, gray);
+      int startX = (currX * targetW) / currentJpgWidth;
+      int endX   = ((currX + 1) * targetW) / currentJpgWidth;
+      int startY = (currY * targetH) / currentJpgHeight;
+      int endY   = ((currY + 1) * targetH) / currentJpgHeight;
+
+      if (startX == endX || startY == endY) continue; // Decoded coordinate maps to sub-pixel, nearest neighbor drops it
+
+      int16_t gray = get_gray(bitmap[i + j * w]);
+
+      for (int ty = startY; ty < endY; ty++) {
+        for (int tx = startX; tx < endX; tx++) {
+          if (hiResMode) drawHiResPixel(tx, ty, gray);
+          else           drawMultiColorPixel(tx, ty, gray);
         }
       }
     }
@@ -143,6 +144,23 @@ void handleSetContrast() {
   }
 }
 
+void handleSetScale() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("s")) {
+    int s = server.arg("s").toInt();
+    if (s == 1 || s == 2 || s == 4 || s == 8) {
+      jpgScale = s;
+      TJpgDec.setJpgScale(jpgScale);
+      memset(c64_buffer, 0, sizeof(c64_buffer)); // clear buffer on scale change
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid scale");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?s= param");
+  }
+}
+
 void handleStats() {
   // Count non-zero bytes for debug
   uint32_t nz = 0;
@@ -155,7 +173,8 @@ void handleStats() {
                 ",\"nonZero\":" + String(nz) +
                 ",\"connected\":" + String(streamConnected ? 1 : 0) +
                 ",\"hires\":" + String(hiResMode ? 1 : 0) +
-                ",\"contrast\":" + String(imgContrast, 2) + "}";
+                ",\"contrast\":" + String(imgContrast, 2) +
+                ",\"scale\":" + String(jpgScale) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
 }
@@ -232,6 +251,15 @@ void handleRoot() {
     width: 16px; height: 16px; border-radius: 50%;
     background: #6c8cff; cursor: pointer; box-shadow: 0 0 10px rgba(100,140,255,0.5);
   }
+  select {
+    appearance: none; -webkit-appearance: none;
+    background: rgba(100,140,255,0.2);
+    color: #a0ff90; padding: 4px 12px;
+    border: 1px solid rgba(100,140,255,0.4); border-radius: 4px;
+    font-family: inherit; font-size: 13px; font-weight: bold;
+    cursor: pointer; outline: none;
+  }
+  select option { background: #16213e; color: #a0b4ff; }
   button {
     padding: 10px 28px;
     font-family: 'Share Tech Mono', monospace;
@@ -300,7 +328,14 @@ void handleRoot() {
   </div>
   <div class="slider-container">
     <span>CONTRAST: <span id="cval" class="val">1.0</span></span>
-    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
+    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" style="width:100px" oninput="updateContrastText()" onchange="sendContrast()">
+    <span style="margin-left:8px">SCALE:</span>
+    <select id="scale" onchange="sendScale()">
+      <option value="1">1:1 (HQ)</option>
+      <option value="2">1:2 (FAST)</option>
+      <option value="4">1:4 (FASTER)</option>
+      <option value="8">1:8 (FASTEST)</option>
+    </select>
   </div>
   <div id="stats">
     <span class="dot" id="dot"></span>
@@ -351,13 +386,17 @@ function updateModeUI() {
   }
 }
 
-// --- Contrast ---
+// --- Adjustments ---
 function updateContrastText() {
   document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1);
 }
 async function sendContrast() {
   const c = document.getElementById('contrast').value;
   try { await fetch('/setcontrast?c=' + c); } catch(e) {}
+}
+async function sendScale() {
+  const s = document.getElementById('scale').value;
+  try { await fetch('/setscale?s=' + s); } catch(e) {}
 }
 
 // --- C64 bitmap layout conversion (same formula for both modes: 40 bytes/row) ---
@@ -456,6 +495,9 @@ async function upd() {
       if (s.contrast !== undefined && document.activeElement !== document.getElementById('contrast')) {
         document.getElementById('contrast').value = s.contrast;
         updateContrastText();
+      }
+      if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) {
+        document.getElementById('scale').value = s.scale;
       }
       const dot  = document.getElementById('dot');
       const stxt = document.getElementById('stxt');
@@ -722,6 +764,7 @@ void setup() {
   server.on("/stats", handleStats);
   server.on("/setmode", handleSetMode);
   server.on("/setcontrast", handleSetContrast);
+  server.on("/setscale", handleSetScale);
   server.begin();
   Serial.println("Web server started");
 }
@@ -766,8 +809,9 @@ void loop() {
         // Decode the JPEG into c64_buffer via the callback
         uint16_t w = 0, h = 0;
         TJpgDec.getJpgSize(&w, &h, temp_jpg_buffer, frameSize);
-        currentJpgWidth = w;
-        Serial.printf("[MJPG] JPEG dimensions: %dx%d\n", w, h);
+        currentJpgWidth = w / jpgScale;
+        currentJpgHeight = h / jpgScale;
+        Serial.printf("[MJPG] JPEG dimensions: %dx%d (scaled: %dx%d)\n", w, h, currentJpgWidth, currentJpgHeight);
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
         lastDecodeResult = (uint32_t)res;
