@@ -29,6 +29,10 @@ volatile uint32_t lastFrameSize = 0;
 volatile uint32_t lastDecodeResult = 0;
 volatile uint32_t nonZeroPixels = 0;
 
+// --- Image Adjustments ---
+float imgContrast = 1.0f;
+uint16_t currentJpgWidth = 320;
+
 // Bayer 4x4 dither matrix
 const int8_t bayer4x4[4][4] = {
     {-32,  0, -24,  8},
@@ -37,6 +41,43 @@ const int8_t bayer4x4[4][4] = {
     { 28, -4,  20, -12}
 };
 
+inline int16_t get_gray(uint16_t p) {
+  uint8_t r = (p >> 8) & 0xF8;
+  uint8_t g = (p >> 3) & 0xFC;
+  uint8_t b = (p << 3) & 0xF8;
+  int16_t gray = (r + g + b) / 3;
+  if (imgContrast != 1.0f) {
+    gray = (int16_t)(((float)gray - 128.0f) * imgContrast + 128.0f);
+    if (gray < 0) gray = 0;
+    if (gray > 255) gray = 255;
+  }
+  return gray;
+}
+
+inline void drawHiResPixel(int x, int y, int16_t gray) {
+  if (x >= 320 || y >= 200) return;
+  // Bayer threshold to 1 bit (use 4x4 matrix, threshold at 128)
+  int16_t dithered = gray + bayer4x4[x % 4][y % 4];
+  uint8_t bit = (constrain(dithered, 0, 255) >= 128) ? 1 : 0;
+  // Pack: MSB = pixel 0
+  int byteIdx = y * 40 + (x / 8);
+  int bitPos  = 7 - (x % 8);
+  if (bit) c64_buffer[byteIdx] |=  (1 << bitPos);
+  else     c64_buffer[byteIdx] &= ~(1 << bitPos);
+}
+
+inline void drawMultiColorPixel(int x, int y, int16_t gray) {
+  if (x >= 160 || y >= 200) return;
+  // Bayer dithering to 4 levels
+  int16_t dithered = gray + bayer4x4[x % 4][y % 4];
+  uint8_t level = map(constrain(dithered, 0, 255), 0, 255, 0, 3);
+  // Pack into 2bpp buffer (MSB left)
+  int byteIdx = y * 40 + (x / 4);
+  int bitPos  = (3 - (x % 4)) * 2;
+  c64_buffer[byteIdx] &= ~(0x03 << bitPos);
+  c64_buffer[byteIdx] |= (level << bitPos);
+}
+
 // TJpg_Decoder callback - converts decoded pixels to C64 bitmap format
 bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   for (int j = 0; j < h; j++) {
@@ -44,35 +85,26 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
       int currX = x + i;
       int currY = y + j;
 
-      uint16_t p = bitmap[i + j * w];
-      // RGB565 to greyscale
-      uint8_t r = (p >> 8) & 0xF8;
-      uint8_t g = (p >> 3) & 0xFC;
-      uint8_t b = (p << 3) & 0xF8;
-      int16_t gray = (r + g + b) / 3;
-
       if (hiResMode) {
-        // --- Hi-Res 320x200 1bpp ---
-        if (currX >= 320 || currY >= 200) continue;
-        // Bayer threshold to 1 bit (use 4x4 matrix, threshold at 128)
-        int16_t dithered = gray + bayer4x4[currX % 4][currY % 4];
-        uint8_t bit = (constrain(dithered, 0, 255) >= 128) ? 1 : 0;
-        // Pack: MSB = pixel 0
-        int byteIdx = currY * 40 + (currX / 8);
-        int bitPos  = 7 - (currX % 8);
-        if (bit) c64_buffer[byteIdx] |=  (1 << bitPos);
-        else     c64_buffer[byteIdx] &= ~(1 << bitPos);
+        if (currentJpgWidth <= 160) {
+          int16_t gray = get_gray(bitmap[i + j * w]);
+          drawHiResPixel(currX * 2, currY, gray);
+          drawHiResPixel(currX * 2 + 1, currY, gray);
+        } else {
+          int16_t gray = get_gray(bitmap[i + j * w]);
+          drawHiResPixel(currX, currY, gray);
+        }
       } else {
-        // --- Multi-color 160x200 2bpp ---
-        if (currX >= 160 || currY >= 200) continue;
-        // Bayer dithering to 4 levels
-        int16_t dithered = gray + bayer4x4[currX % 4][currY % 4];
-        uint8_t level = map(constrain(dithered, 0, 255), 0, 255, 0, 3);
-        // Pack into 2bpp buffer (MSB left)
-        int byteIdx = currY * 40 + (currX / 4);
-        int bitPos  = (3 - (currX % 4)) * 2;
-        c64_buffer[byteIdx] &= ~(0x03 << bitPos);
-        c64_buffer[byteIdx] |= (level << bitPos);
+        if (currentJpgWidth >= 320) {
+          // Downscale by skipping odd pixels and averaging
+          if (currX % 2 != 0) continue;
+          int16_t gray1 = get_gray(bitmap[i + j * w]);
+          int16_t gray2 = (i + 1 < w) ? get_gray(bitmap[i + 1 + j * w]) : gray1;
+          drawMultiColorPixel(currX / 2, currY, (gray1 + gray2) / 2);
+        } else {
+          int16_t gray = get_gray(bitmap[i + j * w]);
+          drawMultiColorPixel(currX, currY, gray);
+        }
       }
     }
   }
@@ -101,6 +133,16 @@ void handleSetMode() {
   }
 }
 
+void handleSetContrast() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("c")) {
+    imgContrast = server.arg("c").toFloat();
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "Missing ?c= param");
+  }
+}
+
 void handleStats() {
   // Count non-zero bytes for debug
   uint32_t nz = 0;
@@ -112,7 +154,8 @@ void handleStats() {
                 ",\"decode\":" + String(lastDecodeResult) +
                 ",\"nonZero\":" + String(nz) +
                 ",\"connected\":" + String(streamConnected ? 1 : 0) +
-                ",\"hires\":" + String(hiResMode ? 1 : 0) + "}";
+                ",\"hires\":" + String(hiResMode ? 1 : 0) +
+                ",\"contrast\":" + String(imgContrast, 2) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
 }
@@ -175,6 +218,19 @@ void handleRoot() {
   .badge-wrap { display:flex; justify-content:center; margin-bottom:10px; }
   .controls {
     display: flex; gap: 10px; margin-top: 16px; justify-content: center; flex-wrap: wrap;
+  }
+  .slider-container {
+    display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 12px; font-size: 13px; color: #a0b4ff;
+    background: rgba(0,0,0,0.2); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(100,140,255,0.2);
+  }
+  input[type=range] {
+    -webkit-appearance: none; width: 140px; background: rgba(100,140,255,0.2);
+    height: 6px; border-radius: 3px; outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #6c8cff; cursor: pointer; box-shadow: 0 0 10px rgba(100,140,255,0.5);
   }
   button {
     padding: 10px 28px;
@@ -242,6 +298,10 @@ void handleRoot() {
     <button onclick="save('PRG')">&#x25B6; PRG</button>
     <button onclick="save('KOA')">&#x25B6; KOA</button>
   </div>
+  <div class="slider-container">
+    <span>CONTRAST: <span id="cval" class="val">1.0</span></span>
+    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
+  </div>
   <div id="stats">
     <span class="dot" id="dot"></span>
     <span id="stxt">Connecting...</span>
@@ -289,6 +349,15 @@ function updateModeUI() {
     badge.className = 'mode-badge mc';
     badge.textContent = 'MULTI-COLOR 160x200';
   }
+}
+
+// --- Contrast ---
+function updateContrastText() {
+  document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1);
+}
+async function sendContrast() {
+  const c = document.getElementById('contrast').value;
+  try { await fetch('/setcontrast?c=' + c); } catch(e) {}
 }
 
 // --- C64 bitmap layout conversion (same formula for both modes: 40 bytes/row) ---
@@ -383,6 +452,10 @@ async function upd() {
       if (serverHires !== isHires) {
         isHires = serverHires;
         updateModeUI();
+      }
+      if (s.contrast !== undefined && document.activeElement !== document.getElementById('contrast')) {
+        document.getElementById('contrast').value = s.contrast;
+        updateContrastText();
       }
       const dot  = document.getElementById('dot');
       const stxt = document.getElementById('stxt');
@@ -648,6 +721,7 @@ void setup() {
   server.on("/data", handleData);
   server.on("/stats", handleStats);
   server.on("/setmode", handleSetMode);
+  server.on("/setcontrast", handleSetContrast);
   server.begin();
   Serial.println("Web server started");
 }
@@ -692,6 +766,7 @@ void loop() {
         // Decode the JPEG into c64_buffer via the callback
         uint16_t w = 0, h = 0;
         TJpgDec.getJpgSize(&w, &h, temp_jpg_buffer, frameSize);
+        currentJpgWidth = w;
         Serial.printf("[MJPG] JPEG dimensions: %dx%d\n", w, h);
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
