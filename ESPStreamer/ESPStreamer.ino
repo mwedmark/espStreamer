@@ -15,8 +15,16 @@ WebServer server(80);
 bool hiResMode = false;  // false = multicolor 160x200 2bpp, true = hires 320x200 1bpp
 
 // --- Buffers ---
-uint8_t c64_buffer[8000];           // 160x200@2bpp or 320x200@1bpp = 8000 bytes
-uint8_t temp_jpg_buffer[25000];     // Buffer for one JPEG frame (increased from 15K)
+uint8_t c64_buffer[16000];          // Two 8000 byte buffers (double buffering)
+volatile uint8_t active_buffer = 0; // The buffer currently being read by the web server (0 or 1)
+uint8_t* render_buffer = c64_buffer + 8000; // Pointer to the inactive buffer for writing
+uint8_t temp_jpg_buffer[32000];     // Buffer for one JPEG frame (increased from 25K)
+
+// --- Coordinate Mapping Tables ---
+int16_t mapX_start[1280];
+int16_t mapX_end[1280];
+int16_t mapY_start[1024];
+int16_t mapY_end[1024];
 
 // --- MJPEG stream state ---
 WiFiClient mjpgClient;
@@ -32,6 +40,7 @@ volatile uint64_t totalBytes = 0;
 
 // --- Image Adjustments ---
 float imgContrast = 1.0f;
+int16_t contrast_fp = 256;
 uint8_t jpgScale = 1;
 uint16_t currentJpgWidth = 320;
 uint16_t currentJpgHeight = 200;
@@ -48,9 +57,9 @@ inline int16_t get_gray(uint16_t p) {
   uint8_t r = (p >> 8) & 0xF8;
   uint8_t g = (p >> 3) & 0xFC;
   uint8_t b = (p << 3) & 0xF8;
-  int16_t gray = (r + g + b) / 3;
-  if (imgContrast != 1.0f) {
-    gray = (int16_t)(((float)gray - 128.0f) * imgContrast + 128.0f);
+  int16_t gray = ((r + g + b) * 85) >> 8;
+  if (contrast_fp != 256) {
+    gray = (int16_t)((((int32_t)gray - 128) * contrast_fp) >> 8) + 128;
     if (gray < 0) gray = 0;
     if (gray > 255) gray = 255;
   }
@@ -60,45 +69,50 @@ inline int16_t get_gray(uint16_t p) {
 inline void drawHiResPixel(int x, int y, int16_t gray) {
   if (x >= 320 || y >= 200) return;
   // Bayer threshold to 1 bit (use 4x4 matrix, threshold at 128)
-  int16_t dithered = gray + bayer4x4[x % 4][y % 4];
-  uint8_t bit = (constrain(dithered, 0, 255) >= 128) ? 1 : 0;
-  // Pack: MSB = pixel 0
-  int byteIdx = y * 40 + (x / 8);
-  int bitPos  = 7 - (x % 8);
-  if (bit) c64_buffer[byteIdx] |=  (1 << bitPos);
-  else     c64_buffer[byteIdx] &= ~(1 << bitPos);
+  int16_t dithered = gray + bayer4x4[x & 3][y & 3];
+  if (dithered >= 128) {
+    // Pack: MSB = pixel 0
+    int byteIdx = y * 40 + (x >> 3);
+    int bitPos  = 7 - (x & 7);
+    render_buffer[byteIdx] |= (1 << bitPos);
+  }
 }
 
 inline void drawMultiColorPixel(int x, int y, int16_t gray) {
   if (x >= 160 || y >= 200) return;
   // Bayer dithering to 4 levels
-  int16_t dithered = gray + bayer4x4[x % 4][y % 4];
-  uint8_t level = map(constrain(dithered, 0, 255), 0, 255, 0, 3);
-  // Pack into 2bpp buffer (MSB left)
-  int byteIdx = y * 40 + (x / 4);
-  int bitPos  = (3 - (x % 4)) * 2;
-  c64_buffer[byteIdx] &= ~(0x03 << bitPos);
-  c64_buffer[byteIdx] |= (level << bitPos);
+  int16_t dithered = gray + bayer4x4[x & 3][y & 3];
+  if (dithered < 0) dithered = 0;
+  if (dithered > 255) dithered = 255;
+  uint8_t level = dithered >> 6;
+  
+  if (level) {
+    // Pack into 2bpp buffer (MSB left)
+    int byteIdx = y * 40 + (x >> 2);
+    int bitPos  = (3 - (x & 3)) << 1;
+    render_buffer[byteIdx] |= (level << bitPos);
+  }
 }
 
 // TJpg_Decoder callback - converts decoded pixels to C64 bitmap format
 bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   if (currentJpgWidth == 0 || currentJpgHeight == 0) return true;
 
-  int targetW = hiResMode ? 320 : 160;
-  int targetH = 200;
-
   for (int j = 0; j < h; j++) {
+    int currY = y + j;
+    if (currY >= currentJpgHeight || currY >= 1024) continue;
+    
+    int startY = mapY_start[currY];
+    int endY   = mapY_end[currY];
+    if (startY == endY) continue; 
+
     for (int i = 0; i < w; i++) {
       int currX = x + i;
-      int currY = y + j;
-
-      int startX = (currX * targetW) / currentJpgWidth;
-      int endX   = ((currX + 1) * targetW) / currentJpgWidth;
-      int startY = (currY * targetH) / currentJpgHeight;
-      int endY   = ((currY + 1) * targetH) / currentJpgHeight;
-
-      if (startX == endX || startY == endY) continue; // Decoded coordinate maps to sub-pixel, nearest neighbor drops it
+      if (currX >= currentJpgWidth || currX >= 1280) continue;
+      
+      int startX = mapX_start[currX];
+      int endX   = mapX_end[currX];
+      if (startX == endX) continue; 
 
       int16_t gray = get_gray(bitmap[i + j * w]);
 
@@ -119,7 +133,7 @@ void handleData() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.setContentLength(8000);
   server.send(200, "application/octet-stream", "");
-  server.sendContent((const char*)c64_buffer, 8000);
+  server.sendContent((const char*)(c64_buffer + active_buffer * 8000), 8000);
 }
 
 void handleSetMode() {
@@ -139,6 +153,7 @@ void handleSetContrast() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (server.hasArg("c")) {
     imgContrast = server.arg("c").toFloat();
+    contrast_fp = (int16_t)(imgContrast * 256.0f);
     server.send(200, "text/plain", "OK");
   } else {
     server.send(400, "text/plain", "Missing ?c= param");
@@ -165,9 +180,11 @@ void handleSetScale() {
 void handleStats() {
   // Count non-zero bytes for debug
   uint32_t nz = 0;
+  uint8_t* current_buf = c64_buffer + active_buffer * 8000;
   for (int i = 0; i < 8000; i++) {
-    if (c64_buffer[i] != 0) nz++;
+    if (current_buf[i] != 0) nz++;
   }
+  nonZeroPixels = nz;
   String json = "{\"frames\":" + String(frameCount) +
                 ",\"lastSize\":" + String(lastFrameSize) +
                 ",\"decode\":" + String(lastDecodeResult) +
@@ -491,8 +508,12 @@ function download(d, n) {
 
 async function upd() {
   try {
-    // Fetch stats first to get mode
-    const sr = await fetch('/stats?t=' + Date.now());
+    // Fetch stats and data in parallel
+    const srPromise = fetch('/stats?t=' + Date.now());
+    const rPromise = fetch('/data?t=' + Date.now());
+    
+    const [sr, r] = await Promise.all([srPromise, rPromise]);
+
     if (sr.ok) {
       const s = await sr.json();
       const serverHires = !!s.hires;
@@ -534,7 +555,6 @@ async function upd() {
         ' &nbsp;|&nbsp; Total: <span class="val">' + s.totalKB + '</span> KB';
     }
 
-    const r = await fetch('/data?t=' + Date.now());
     if (!r.ok) return;
     const d = new Uint8Array(await r.arrayBuffer());
     const cv  = document.getElementById('c');
@@ -575,7 +595,7 @@ async function upd() {
   } catch(e) {
     console.log('Fetch error:', e);
   }
-  if (running) setTimeout(upd, 150);
+  if (running) setTimeout(upd, 70);
 }
 upd();
 </script>
@@ -637,7 +657,7 @@ bool connectToStream() {
   boundary = "";
   while (mjpgClient.connected() && mjpgClient.available()) {
     String line = readStreamLine(mjpgClient);
-    Serial.println("[HDR] " + line);
+    //Serial.println("[HDR] " + line);
     
     if (line.length() == 0) break; // Empty line = end of headers
 
@@ -683,10 +703,10 @@ size_t readOneFrame() {
     uint8_t b = mjpgClient.read();
     
     // Debug: print first 40 bytes we see (to understand stream format)
-    if (skipped < 40 && frameCount == 0) {
-      Serial.printf("%02X ", b);
-      if (skipped == 39) Serial.println(" ...");
-    }
+    //if (skipped < 40 && frameCount == 0) {
+    //  Serial.printf("%02X ", b);
+    //  if (skipped == 39) Serial.println(" ...");
+    //}
     
     if (prev == 0xFF && b == 0xD8) {
       // Found JPEG Start Of Image
@@ -824,11 +844,11 @@ void loop() {
       totalBytes += frameSize;
 
       // Debug: print first 8 bytes of JPEG
-      Serial.printf("[MJPG] Frame %d: %d bytes, header: ", frameCount + 1, frameSize);
-      for (int i = 0; i < min((size_t)8, frameSize); i++) {
-        Serial.printf("%02X ", temp_jpg_buffer[i]);
-      }
-      Serial.println();
+      //Serial.printf("[MJPG] Frame %d: %d bytes, header: ", frameCount + 1, frameSize);
+      //for (int i = 0; i < min((size_t)8, frameSize); i++) {
+      //  Serial.printf("%02X ", temp_jpg_buffer[i]);
+      //}
+      //Serial.println();
 
       // Verify it looks like a JPEG (starts with FF D8)
       if (frameSize > 2 && temp_jpg_buffer[0] == 0xFF && temp_jpg_buffer[1] == 0xD8) {
@@ -837,20 +857,39 @@ void loop() {
         TJpgDec.getJpgSize(&w, &h, temp_jpg_buffer, frameSize);
         currentJpgWidth = w / jpgScale;
         currentJpgHeight = h / jpgScale;
-        Serial.printf("[MJPG] JPEG dimensions: %dx%d (scaled: %dx%d)\n", w, h, currentJpgWidth, currentJpgHeight);
+        //Serial.printf("[MJPG] JPEG dimensions: %dx%d (scaled: %dx%d)\n", w, h, currentJpgWidth, currentJpgHeight);
+
+        // Precalculate mapping tables
+        int targetW = hiResMode ? 320 : 160;
+        int targetH = 200;
+        for (int i = 0; i < currentJpgWidth && i < 1280; i++) {
+          mapX_start[i] = (i * targetW) / currentJpgWidth;
+          mapX_end[i]   = ((i + 1) * targetW) / currentJpgWidth;
+        }
+        for (int i = 0; i < currentJpgHeight && i < 1024; i++) {
+          mapY_start[i] = (i * targetH) / currentJpgHeight;
+          mapY_end[i]   = ((i + 1) * targetH) / currentJpgHeight;
+        }
+
+        // Setup render buffer and clear it BEFORE decoding starts (so bitwise OR works)
+        render_buffer = c64_buffer + (1 - active_buffer) * 8000;
+        memset(render_buffer, 0, 8000);
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
         lastDecodeResult = (uint32_t)res;
 
         if (res == JDR_OK) {
           frameCount++;
-          // Count non-zero bytes for debug
+          // Count non-zero bytes for debug (using the newly rendered buffer)
           uint32_t nz = 0;
           for (int i = 0; i < 8000; i++) {
-            if (c64_buffer[i] != 0) nz++;
+            if (render_buffer[i] != 0) nz++;
           }
           nonZeroPixels = nz;
-          Serial.printf("[MJPG] Decode OK! Non-zero bytes: %d/8000\n", nz);
+          //Serial.printf("[MJPG] Decode OK! Non-zero bytes: %d/8000\n", nz);
+          
+          // Flip the buffer so the web server serves the new frame!
+          active_buffer = 1 - active_buffer;
         } else {
           Serial.printf("[MJPG] Decode FAILED: error %d\n", res);
         }
