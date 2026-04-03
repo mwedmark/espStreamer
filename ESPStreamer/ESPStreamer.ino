@@ -12,13 +12,17 @@ const char* streamPath = "/pc.mjpg";
 WebServer server(80);
 
 // --- Mode ---
-bool hiResMode = false;  // false = multicolor 160x200 2bpp, true = hires 320x200 1bpp
+enum StreamMode { M_MC_GRAY, M_HR_GRAY, M_MC_COLOR, M_HR_COLOR };
+StreamMode currentMode = M_MC_COLOR;
+#define IS_HIRES (currentMode == M_HR_GRAY || currentMode == M_HR_COLOR)
+#define IS_COLOR (currentMode == M_MC_COLOR || currentMode == M_HR_COLOR)
 
 // --- Buffers ---
-uint8_t c64_buffer[16000];          // Two 8000 byte buffers (double buffering)
+uint8_t c64_buffer[20000];          // Two 10000 byte buffers (double buffering)
 volatile uint8_t active_buffer = 0; // The buffer currently being read by the web server (0 or 1)
-uint8_t* render_buffer = c64_buffer + 8000; // Pointer to the inactive buffer for writing
+uint8_t* render_buffer = c64_buffer + 10000; // Pointer to the inactive buffer for writing
 uint8_t temp_jpg_buffer[32000];     // Buffer for one JPEG frame (increased from 25K)
+uint8_t color_buffer[64000];        // Intermediate mapped colors
 
 // --- Coordinate Mapping Tables ---
 int16_t mapX_start[1280];
@@ -45,6 +49,11 @@ uint8_t jpgScale = 1;
 uint16_t currentJpgWidth = 320;
 uint16_t currentJpgHeight = 200;
 
+// C64 Pepto Palette (RGB888)
+const uint8_t c64_pal_r[16] = {0,255,136,170,204,0,  0,  238,221,102,255,51,119,170,0,  187};
+const uint8_t c64_pal_g[16] = {0,255,0,  255,68, 204,0,  238,136,68, 119,51,119,255,136,187};
+const uint8_t c64_pal_b[16] = {0,255,0,  238,204,85, 170,119,85, 0,  119,51,119,102,255,187};
+
 // Bayer 4x4 dither matrix
 const int8_t bayer4x4[4][4] = {
     {-32,  0, -24,  8},
@@ -53,6 +62,123 @@ const int8_t bayer4x4[4][4] = {
     { 28, -4,  20, -12}
 };
 
+inline uint32_t manhattanDist(uint8_t c1, uint8_t c2) {
+  return abs(c64_pal_r[c1] - c64_pal_r[c2]) + abs(c64_pal_g[c1] - c64_pal_g[c2]) + abs(c64_pal_b[c1] - c64_pal_b[c2]);
+}
+
+inline uint8_t rgb565_to_c64(uint16_t p) {
+  int r = (p >> 8) & 0xF8;
+  int g = (p >> 3) & 0xFC;
+  int b = (p << 3) & 0xF8;
+  
+  if (contrast_fp != 256) {
+    r = (int)((((r - 128) * contrast_fp) >> 8) + 128);
+    g = (int)((((g - 128) * contrast_fp) >> 8) + 128);
+    b = (int)((((b - 128) * contrast_fp) >> 8) + 128);
+    if(r<0) r=0; if(r>255) r=255;
+    if(g<0) g=0; if(g>255) g=255;
+    if(b<0) b=0; if(b>255) b=255;
+  }
+  
+  uint32_t best_dist = 0xFFFFFFFF;
+  uint8_t best_col = 0;
+  for (int i=0; i<16; i++) {
+    uint32_t dist = abs(r - c64_pal_r[i]) + abs(g - c64_pal_g[i]) + abs(b - c64_pal_b[i]);
+    if (dist < best_dist) {
+      best_dist = dist;
+      best_col = i;
+    }
+  }
+  return best_col;
+}
+
+void packC64Frame() {
+  uint8_t* bitmap_ram = render_buffer;
+  uint8_t* screen_ram = render_buffer + 8000;
+  uint8_t* color_ram  = render_buffer + 9000;
+  
+  uint8_t bgColor = 0; // Black global background
+  
+  for (int cy = 0; cy < 25; cy++) {
+    for (int cx = 0; cx < 40; cx++) {
+      int cellIdx = cy * 40 + cx;
+      
+      if (IS_HIRES) {
+        int counts[16] = {0};
+        for (int py=0; py<8; py++) {
+          for (int px=0; px<8; px++) {
+            counts[color_buffer[(cy*8 + py)*320 + (cx*8 + px)]]++;
+          }
+        }
+        
+        uint8_t bg = 0, fg = 1;
+        int max_bg = -1, max_fg = -1;
+        for (int i=0; i<16; i++) {
+          if (counts[i] > max_bg) { max_fg = max_bg; fg = bg; max_bg = counts[i]; bg = i; }
+          else if (counts[i] > max_fg) { max_fg = counts[i]; fg = i; }
+        }
+        
+        screen_ram[cellIdx] = (fg << 4) | (bg & 0x0F);
+        
+        for (int py=0; py<8; py++) {
+          uint8_t byte = 0;
+          for (int px=0; px<8; px++) {
+            uint8_t c = color_buffer[(cy*8 + py)*320 + (cx*8 + px)];
+            int32_t dbg = (int32_t)manhattanDist(c, bg);
+            int32_t dfg = (int32_t)manhattanDist(c, fg);
+            int32_t bayer = bayer4x4[px & 3][py & 3] * 4;
+            
+            if (dfg - bayer < dbg + bayer) byte |= (1 << (7 - px));
+          }
+          bitmap_ram[cellIdx * 8 + py] = byte;
+        }
+      } else {
+        int counts[16] = {0};
+        for (int py=0; py<8; py++) {
+          for (int px=0; px<4; px++) {
+            counts[color_buffer[(cy*8 + py)*160 + (cx*4 + px)]]++;
+          }
+        }
+        
+        counts[bgColor] = -1; 
+        
+        uint8_t c1=0, c2=0, c3=0;
+        int m1=-1, m2=-1, m3=-1;
+        for(int i=0;i<16;i++){
+          if(counts[i]>m1){ m3=m2;c3=c2; m2=m1;c2=c1; m1=counts[i];c1=i; }
+          else if(counts[i]>m2){ m3=m2;c3=c2; m2=counts[i];c2=i; }
+          else if(counts[i]>m3){ m3=counts[i];c3=i; }
+        }
+        if(m2==-1) c2=c1;
+        if(m3==-1) c3=c1;
+        
+        screen_ram[cellIdx] = (c1 << 4) | (c2 & 0x0F);
+        color_ram[cellIdx]  = c3;
+        
+        for (int py=0; py<8; py++) {
+          uint8_t byte = 0;
+          for (int px=0; px<4; px++) {
+            uint8_t c = color_buffer[(cy*8 + py)*160 + (cx*4 + px)];
+            uint32_t d0 = manhattanDist(c, bgColor);
+            uint32_t d1 = manhattanDist(c, c1);
+            uint32_t d2 = manhattanDist(c, c2);
+            uint32_t d3 = manhattanDist(c, c3);
+            
+            uint32_t m = d0; uint8_t bits = 0;
+            if(d1 < m) { m = d1; bits = 1; }
+            if(d2 < m) { m = d2; bits = 2; }
+            if(d3 < m) { m = d3; bits = 3; }
+            
+            byte |= (bits << ((3 - px) * 2));
+          }
+          bitmap_ram[cellIdx * 8 + py] = byte;
+        }
+      }
+    }
+  }
+}
+
+// Legacy Gray functions
 inline int16_t get_gray(uint16_t p) {
   uint8_t r = (p >> 8) & 0xF8;
   uint8_t g = (p >> 3) & 0xFC;
@@ -68,33 +194,30 @@ inline int16_t get_gray(uint16_t p) {
 
 inline void drawHiResPixel(int x, int y, int16_t gray) {
   if (x >= 320 || y >= 200) return;
-  // Bayer threshold to 1 bit (use 4x4 matrix, threshold at 128)
   int16_t dithered = gray + bayer4x4[x & 3][y & 3];
   if (dithered >= 128) {
-    // Pack: MSB = pixel 0
-    int byteIdx = y * 40 + (x >> 3);
-    int bitPos  = 7 - (x & 7);
-    render_buffer[byteIdx] |= (1 << bitPos);
+    int cellIdx = (y / 8) * 40 + (x / 8);
+    int py = (y % 8);
+    int bitPos = 7 - (x % 8);
+    render_buffer[cellIdx * 8 + py] |= (1 << bitPos);
   }
 }
 
 inline void drawMultiColorPixel(int x, int y, int16_t gray) {
   if (x >= 160 || y >= 200) return;
-  // Bayer dithering to 4 levels
   int16_t dithered = gray + bayer4x4[x & 3][y & 3];
   if (dithered < 0) dithered = 0;
   if (dithered > 255) dithered = 255;
   uint8_t level = dithered >> 6;
-  
   if (level) {
-    // Pack into 2bpp buffer (MSB left)
-    int byteIdx = y * 40 + (x >> 2);
-    int bitPos  = (3 - (x & 3)) << 1;
-    render_buffer[byteIdx] |= (level << bitPos);
+    int cellIdx = (y / 8) * 40 + (x / 4);
+    int py = (y % 8);
+    int bitPos = (3 - (x % 4)) * 2;
+    render_buffer[cellIdx * 8 + py] |= (level << bitPos);
   }
 }
 
-// TJpg_Decoder callback - converts decoded pixels to C64 bitmap format
+// TJpg_Decoder callback
 bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
   if (currentJpgWidth == 0 || currentJpgHeight == 0) return true;
 
@@ -114,12 +237,23 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
       int endX   = mapX_end[currX];
       if (startX == endX) continue; 
 
-      int16_t gray = get_gray(bitmap[i + j * w]);
-
-      for (int ty = startY; ty < endY; ty++) {
-        for (int tx = startX; tx < endX; tx++) {
-          if (hiResMode) drawHiResPixel(tx, ty, gray);
-          else           drawMultiColorPixel(tx, ty, gray);
+      if (IS_COLOR) {
+        uint8_t c64col = rgb565_to_c64(bitmap[i + j * w]);
+        int wTarget = IS_HIRES ? 320 : 160;
+        for (int ty = startY; ty < endY; ty++) {
+          for (int tx = startX; tx < endX; tx++) {
+            if (ty < 200 && tx < wTarget) {
+              color_buffer[ty * wTarget + tx] = c64col;
+            }
+          }
+        }
+      } else {
+        int16_t gray = get_gray(bitmap[i + j * w]);
+        for (int ty = startY; ty < endY; ty++) {
+          for (int tx = startX; tx < endX; tx++) {
+            if (IS_HIRES) drawHiResPixel(tx, ty, gray);
+            else          drawMultiColorPixel(tx, ty, gray);
+          }
         }
       }
     }
@@ -131,19 +265,21 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
 
 void handleData() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.setContentLength(8000);
+  server.setContentLength(10000);
   server.send(200, "application/octet-stream", "");
-  server.sendContent((const char*)(c64_buffer + active_buffer * 8000), 8000);
+  server.sendContent((const char*)(c64_buffer + active_buffer * 10000), 10000);
 }
 
 void handleSetMode() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (server.hasArg("m")) {
     String m = server.arg("m");
-    hiResMode = (m == "hires");
-    // Clear buffer when switching modes
+    if (m == "mc_gray") currentMode = M_MC_GRAY;
+    else if (m == "hr_gray") currentMode = M_HR_GRAY;
+    else if (m == "mc_color") currentMode = M_MC_COLOR;
+    else if (m == "hr_color") currentMode = M_HR_COLOR;
     memset(c64_buffer, 0, sizeof(c64_buffer));
-    server.send(200, "text/plain", hiResMode ? "hires" : "multicolor");
+    server.send(200, "text/plain", m);
   } else {
     server.send(400, "text/plain", "Missing ?m= param");
   }
@@ -180,17 +316,22 @@ void handleSetScale() {
 void handleStats() {
   // Count non-zero bytes for debug
   uint32_t nz = 0;
-  uint8_t* current_buf = c64_buffer + active_buffer * 8000;
-  for (int i = 0; i < 8000; i++) {
+  uint8_t* current_buf = c64_buffer + active_buffer * 10000;
+  for (int i = 0; i < 10000; i++) {
     if (current_buf[i] != 0) nz++;
   }
   nonZeroPixels = nz;
+  String mStr = "mc_color";
+  if (currentMode == M_MC_GRAY) mStr = "mc_gray";
+  else if (currentMode == M_HR_GRAY) mStr = "hr_gray";
+  else if (currentMode == M_HR_COLOR) mStr = "hr_color";
+  
   String json = "{\"frames\":" + String(frameCount) +
+                ",\"mode\":\"" + mStr + "\"" +
                 ",\"lastSize\":" + String(lastFrameSize) +
                 ",\"decode\":" + String(lastDecodeResult) +
                 ",\"nonZero\":" + String(nz) +
                 ",\"connected\":" + String(streamConnected ? 1 : 0) +
-                ",\"hires\":" + String(hiResMode ? 1 : 0) +
                 ",\"contrast\":" + String(imgContrast, 2) +
                 ",\"scale\":" + String(jpgScale) +
                 ",\"totalKB\":" + String((uint32_t)(totalBytes / 1024)) + "}";
@@ -337,11 +478,16 @@ void handleRoot() {
 <h2>&#x25C8; C64 LIVE ENCODER &#x25C8;</h2>
 <div class="container">
   <div class="badge-wrap">
-    <span class="mode-badge mc" id="badge">MULTI-COLOR 160x200</span>
+    <span class="mode-badge mc" id="badge" style="display:none;"></span>
   </div>
   <canvas id="c" width="160" height="200"></canvas>
   <div class="controls">
-    <button id="btn-mode" class="mc" onclick="toggleMode()">&#x21C4; HIRES 320x200</button>
+    <select id="mode-sel" onchange="toggleMode()" style="padding:10px; font-size:14px; font-family:'Share Tech Mono'; background:#333; color:#fff; border:1px solid #666; cursor:pointer;">
+      <option value="mc_gray">MULTI-COLOR GRAYSCALE</option>
+      <option value="hr_gray">HI-RES GRAYSCALE</option>
+      <option value="mc_color" selected>MULTI-COLOR COLOR</option>
+      <option value="hr_color">HI-RES COLOR</option>
+    </select>
     <button onclick="save('PRG')">&#x25B6; PRG</button>
     <button onclick="save('KOA')">&#x25B6; KOA</button>
   </div>
@@ -363,9 +509,15 @@ void handleRoot() {
 </div>
 
 <script>
-const palMC = [0, 85, 170, 255];  // 4-level grey for multicolor
+const c64Pal = [
+  [0,0,0], [255,255,255], [136,0,0], [170,255,238],
+  [204,68,204], [0,204,85], [0,0,170], [238,238,119],
+  [221,136,85], [102,68,0], [255,119,119], [51,51,51],
+  [119,119,119], [170,255,102], [0,136,255], [187,187,187]
+];
 let running = true;
-let isHires = false;  // mirrors ESP32 mode
+let isHires = false;  // dynamic tracking based on mode prefix
+let currentClientMode = 'mc_color';
 
 let lastStatsTime = 0;
 let lastFrames = 0;
@@ -378,37 +530,26 @@ function resizeCanvas(hires) {
   const cv = document.getElementById('c');
   cv.width  = hires ? 320 : 160;
   cv.height = 200;
-  cv.style.height = hires ? '400px' : '400px';  // always 400px display height
+  cv.style.height = '400px'; 
   cv.style.width  = '640px';
 }
 
 // --- Mode toggle ---
 async function toggleMode() {
-  const target = isHires ? 'multicolor' : 'hires';
+  const target = document.getElementById('mode-sel').value;
   try {
     const r = await fetch('/setmode?m=' + target + '&t=' + Date.now());
     if (r.ok) {
-      isHires = (target === 'hires');
+      currentClientMode = target;
       updateModeUI();
     }
   } catch(e) { console.log('setmode error:', e); }
 }
 
 function updateModeUI() {
-  const btn   = document.getElementById('btn-mode');
-  const badge = document.getElementById('badge');
+  document.getElementById('mode-sel').value = currentClientMode;
+  isHires = currentClientMode.startsWith('hr_');
   resizeCanvas(isHires);
-  if (isHires) {
-    btn.className   = 'hr';
-    btn.innerHTML   = '&#x21C4; MULTI-COLOR 160x200';
-    badge.className = 'mode-badge hr';
-    badge.textContent = 'HI-RES 320x200';
-  } else {
-    btn.className   = 'mc';
-    btn.innerHTML   = '&#x21C4; HIRES 320x200';
-    badge.className = 'mode-badge mc';
-    badge.textContent = 'MULTI-COLOR 160x200';
-  }
 }
 
 // --- Adjustments ---
@@ -424,33 +565,20 @@ async function sendScale() {
   try { await fetch('/setscale?s=' + s); } catch(e) {}
 }
 
-// --- C64 bitmap layout conversion (same formula for both modes: 40 bytes/row) ---
-function linearToC64(linear) {
-  const c64 = new Uint8Array(8000);
-  for (let y = 0; y < 200; y++) {
-    for (let xByte = 0; xByte < 40; xByte++) {
-      let linIdx = y * 40 + xByte;
-      let charRow = Math.floor(y / 8);
-      let c64Idx  = (charRow * 40 + xByte) * 8 + (y % 8);
-      c64[c64Idx] = linear[linIdx];
-    }
-  }
-  return c64;
-}
-
 // --- Save ---
 async function save(t) {
   const r = await fetch('/data?t=' + Date.now());
-  const d = new Uint8Array(await r.arrayBuffer());
-  const bmp = linearToC64(d);
+  const bmp = new Uint8Array(await r.arrayBuffer());
   let f;
   if (t === 'KOA') {
-    // KOA only makes sense in multicolor
     f = new Uint8Array(10003);
     f[0] = 0; f[1] = 0x60;
-    f.set(bmp, 2);
-    for (let i = 8002; i < 9002; i++) f[i] = 0xBC;
-    for (let i = 9002; i < 10002; i++) f[i] = 1;
+    f.set(bmp.subarray(0, 8000), 2);
+    for (let i = 0; i < 1000; i++) {
+      f[8002 + i] = bmp[8000 + i];
+      f[9002 + i] = bmp[9000 + i];
+    }
+    f[10002] = 0; // BG Color (Black)
     download(f, 'img.koa');
   } else {
     f = new Uint8Array(14145);
@@ -485,16 +613,13 @@ async function save(t) {
     f.set(prgAsm, 14);
 
     // Embed Screen RAM source data (at $0870, offset 113)
-    // For HiRes, we need $10 (foreground white, background black) per cell.
-    // For Multicolor, we use $BC.
-    for (let i = 113; i < 1113; i++) f[i] = isHires ? 0x10 : 0xBC;
+    for (let i = 0; i < 1000; i++) f[113 + i] = bmp[8000 + i];
     
     // Embed Color RAM source data (at $0C58, offset 1113)
-    // Always 1 (White) for both modes.
-    for (let i = 1113; i < 2113; i++) f[i] = 1;
+    for (let i = 0; i < 1000; i++) f[1113 + i] = bmp[9000 + i];
 
     // Bitmap data always at $2000 (offset 6145 from file start)
-    f.set(bmp, 6145);
+    f.set(bmp.subarray(0, 8000), 6145);
     download(f, isHires ? 'hires.prg' : 'v.prg');
   }
 }
@@ -516,9 +641,8 @@ async function upd() {
 
     if (sr.ok) {
       const s = await sr.json();
-      const serverHires = !!s.hires;
-      if (serverHires !== isHires) {
-        isHires = serverHires;
+      if (s.mode && s.mode !== currentClientMode) {
+        currentClientMode = s.mode;
         updateModeUI();
       }
       if (s.contrast !== undefined && document.activeElement !== document.getElementById('contrast')) {
@@ -561,34 +685,52 @@ async function upd() {
     const ctx = cv.getContext('2d');
 
     if (isHires) {
-      // 320x200 1-bit: 1 byte = 8 pixels
       const img = ctx.createImageData(320, 200);
       for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8);
+        let py = by % 8;
         for (let bx = 0; bx < 40; bx++) {
-          const byte = d[by * 40 + bx];
+          let cellIdx = charRow * 40 + bx;
+          const byte = d[cellIdx * 8 + py];
+          let screenByte = d[8000 + cellIdx];
+          let fgCol = c64Pal[screenByte >> 4];
+          let bgCol = c64Pal[screenByte & 0x0F];
+          
           for (let bit = 7; bit >= 0; bit--) {
             const px = bx * 8 + (7 - bit);
-            const v  = (byte >> bit) & 1 ? 255 : 0;
+            const isFg = (byte >> bit) & 1;
+            const c = isFg ? fgCol : bgCol;
             const idx = (by * 320 + px) * 4;
-            img.data[idx]   = v;
-            img.data[idx+1] = v;
-            img.data[idx+2] = v;
+            img.data[idx]   = c[0];
+            img.data[idx+1] = c[1];
+            img.data[idx+2] = c[2];
             img.data[idx+3] = 255;
           }
         }
       }
       ctx.putImageData(img, 0, 0);
     } else {
-      // 160x200 2-bit
       const img = ctx.createImageData(160, 200);
-      for (let i = 0; i < 32000; i++) {
-        let bIdx = Math.floor(i / 4);
-        let bit  = (3 - (i % 4)) * 2;
-        let v    = palMC[(d[bIdx] >> bit) & 3];
-        img.data[i * 4]     = v;
-        img.data[i * 4 + 1] = v;
-        img.data[i * 4 + 2] = v;
-        img.data[i * 4 + 3] = 255;
+      let bgCol = c64Pal[0]; // Global Black
+      for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8);
+        let py = by % 8;
+        for (let bx = 0; bx < 40; bx++) {
+          let cellIdx = charRow * 40 + bx;
+          let byte = d[cellIdx * 8 + py];
+          let screenByte = d[8000 + cellIdx];
+          let colorByte  = d[9000 + cellIdx];
+          let cols = [ bgCol, c64Pal[screenByte >> 4], c64Pal[screenByte & 0x0F], c64Pal[colorByte & 0x0F] ];
+          
+          for (let px = 0; px < 4; px++) {
+            let col = cols[(byte >> ((3 - px) * 2)) & 3];
+            let outIdx = (by * 160 + bx * 4 + px) * 4;
+            img.data[outIdx]   = col[0];
+            img.data[outIdx+1] = col[1];
+            img.data[outIdx+2] = col[2];
+            img.data[outIdx+3] = 255;
+          }
+        }
       }
       ctx.putImageData(img, 0, 0);
     }
@@ -860,7 +1002,7 @@ void loop() {
         //Serial.printf("[MJPG] JPEG dimensions: %dx%d (scaled: %dx%d)\n", w, h, currentJpgWidth, currentJpgHeight);
 
         // Precalculate mapping tables
-        int targetW = hiResMode ? 320 : 160;
+        int targetW = IS_HIRES ? 320 : 160;
         int targetH = 200;
         for (int i = 0; i < currentJpgWidth && i < 1280; i++) {
           mapX_start[i] = (i * targetW) / currentJpgWidth;
@@ -872,21 +1014,29 @@ void loop() {
         }
 
         // Setup render buffer and clear it BEFORE decoding starts (so bitwise OR works)
-        render_buffer = c64_buffer + (1 - active_buffer) * 8000;
-        memset(render_buffer, 0, 8000);
+        render_buffer = c64_buffer + (1 - active_buffer) * 10000;
+        memset(render_buffer, 0, 10000);
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
         lastDecodeResult = (uint32_t)res;
 
         if (res == JDR_OK) {
+          if (IS_COLOR) {
+            packC64Frame();
+          } else {
+            uint8_t* screen_ram = render_buffer + 8000;
+            uint8_t* color_ram  = render_buffer + 9000;
+            uint8_t staticScreen = IS_HIRES ? 0x10 : 0xBC; // 1:White fg, 0:Black bg (HR) OR B:DarkGrey, C:MedGrey (MC)
+            memset(screen_ram, staticScreen, 1000);
+            memset(color_ram, 1, 1000); // 1:White
+          }
           frameCount++;
-          // Count non-zero bytes for debug (using the newly rendered buffer)
+          
           uint32_t nz = 0;
-          for (int i = 0; i < 8000; i++) {
+          for (int i = 0; i < 10000; i++) {
             if (render_buffer[i] != 0) nz++;
           }
           nonZeroPixels = nz;
-          //Serial.printf("[MJPG] Decode OK! Non-zero bytes: %d/8000\n", nz);
           
           // Flip the buffer so the web server serves the new frame!
           active_buffer = 1 - active_buffer;
