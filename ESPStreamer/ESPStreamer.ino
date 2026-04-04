@@ -46,6 +46,7 @@ volatile uint64_t totalBytes = 0;
 float imgContrast = 1.0f;
 int16_t contrast_fp = 256;
 uint8_t jpgScale = 1;
+uint8_t ditherStrength = 4;  // Bayer dither intensity: 0=off, 1-8
 uint16_t currentJpgWidth = 320;
 uint16_t currentJpgHeight = 200;
 
@@ -54,12 +55,16 @@ const uint8_t c64_pal_r[16] = {0,255,136,170,204,0,  0,  238,221,102,255,51,119,
 const uint8_t c64_pal_g[16] = {0,255,0,  255,68, 204,0,  238,136,68, 119,51,119,255,136,187};
 const uint8_t c64_pal_b[16] = {0,255,0,  238,204,85, 170,119,85, 0,  119,51,119,102,255,187};
 
-// Bayer 4x4 dither matrix
-const int8_t bayer4x4[4][4] = {
-    {-32,  0, -24,  8},
-    { 16, -16, 24, -8},
-    {-20, 12, -28,  4},
-    { 28, -4,  20, -12}
+// Bayer 8x8 ordered dither matrix (centered, range -32..+31)
+const int8_t bayer8x8[8][8] = {
+    {-32,  0, -24,  8, -30,  2, -22, 10},
+    { 16,-16,  24, -8,  18,-14,  26, -6},
+    {-20, 12, -28,  4, -18, 14, -26,  6},
+    { 28, -4,  20,-12,  30, -2,  22,-10},
+    {-29,  3, -21, 11, -31,  1, -23,  9},
+    { 19,-13,  27, -5,  17,-15,  25, -7},
+    {-17, 15, -25,  7, -19, 13, -27,  5},
+    { 31, -1,  23, -9,  29, -3,  21,-11}
 };
 
 inline uint32_t manhattanDist(uint8_t c1, uint8_t c2) {
@@ -126,7 +131,7 @@ void packC64Frame() {
             uint8_t c = color_buffer[(cy*8 + py)*320 + (cx*8 + px)];
             int32_t dbg = (int32_t)manhattanDist(c, bg);
             int32_t dfg = (int32_t)manhattanDist(c, fg);
-            int32_t bayer = bayer4x4[px & 3][py & 3] * 4;
+            int32_t bayer = (ditherStrength > 0) ? (int32_t)bayer8x8[py & 7][px & 7] * ditherStrength : 0;
             
             if (dfg - bayer < dbg + bayer) byte |= (1 << (7 - px));
           }
@@ -159,15 +164,33 @@ void packC64Frame() {
           uint8_t byte = 0;
           for (int px=0; px<4; px++) {
             uint8_t c = color_buffer[(cy*8 + py)*160 + (cx*4 + px)];
-            uint32_t d0 = manhattanDist(c, bgColor);
-            uint32_t d1 = manhattanDist(c, c1);
-            uint32_t d2 = manhattanDist(c, c2);
-            uint32_t d3 = manhattanDist(c, c3);
+            int32_t d0 = (int32_t)manhattanDist(c, bgColor);
+            int32_t d1 = (int32_t)manhattanDist(c, c1);
+            int32_t d2 = (int32_t)manhattanDist(c, c2);
+            int32_t d3 = (int32_t)manhattanDist(c, c3);
             
-            uint32_t m = d0; uint8_t bits = 0;
-            if(d1 < m) { m = d1; bits = 1; }
-            if(d2 < m) { m = d2; bits = 2; }
-            if(d3 < m) { m = d3; bits = 3; }
+            // Partial sort: bring best two candidates to front
+            int32_t dists[4] = {d0, d1, d2, d3};
+            uint8_t slots[4] = {0, 1, 2, 3};
+            for (int a = 0; a < 2; a++) {
+              for (int b = a+1; b < 4; b++) {
+                if (dists[b] < dists[a]) {
+                  int32_t td = dists[a]; dists[a] = dists[b]; dists[b] = td;
+                  uint8_t ts = slots[a]; slots[a] = slots[b]; slots[b] = ts;
+                }
+              }
+            }
+            
+            uint8_t bits;
+            if (ditherStrength > 0) {
+              // Bayer 8x8: dither between nearest and second-nearest palette color
+              int gx = (cx * 4 + px) & 7;
+              int gy = (cy * 8 + py) & 7;
+              int32_t bayerVal = (int32_t)bayer8x8[gy][gx] * ditherStrength;
+              bits = (dists[1] - bayerVal < dists[0] + bayerVal) ? slots[1] : slots[0];
+            } else {
+              bits = slots[0];
+            }
             
             byte |= (bits << ((3 - px) * 2));
           }
@@ -194,7 +217,7 @@ inline int16_t get_gray(uint16_t p) {
 
 inline void drawHiResPixel(int x, int y, int16_t gray) {
   if (x >= 320 || y >= 200) return;
-  int16_t dithered = gray + bayer4x4[x & 3][y & 3];
+  int16_t dithered = (ditherStrength > 0) ? gray + bayer8x8[y & 7][x & 7] : gray;
   if (dithered >= 128) {
     int cellIdx = (y / 8) * 40 + (x / 8);
     int py = (y % 8);
@@ -205,7 +228,7 @@ inline void drawHiResPixel(int x, int y, int16_t gray) {
 
 inline void drawMultiColorPixel(int x, int y, int16_t gray) {
   if (x >= 160 || y >= 200) return;
-  int16_t dithered = gray + bayer4x4[x & 3][y & 3];
+  int16_t dithered = (ditherStrength > 0) ? gray + bayer8x8[y & 7][x & 7] : gray;
   if (dithered < 0) dithered = 0;
   if (dithered > 255) dithered = 255;
   uint8_t level = dithered >> 6;
@@ -296,6 +319,21 @@ void handleSetContrast() {
   }
 }
 
+void handleSetDither() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("d")) {
+    int d = server.arg("d").toInt();
+    if (d >= 0 && d <= 8) {
+      ditherStrength = (uint8_t)d;
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid value (0-8)");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?d= param");
+  }
+}
+
 void handleSetScale() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (server.hasArg("s")) {
@@ -334,6 +372,7 @@ void handleStats() {
                 ",\"connected\":" + String(streamConnected ? 1 : 0) +
                 ",\"contrast\":" + String(imgContrast, 2) +
                 ",\"scale\":" + String(jpgScale) +
+                ",\"dither\":" + String(ditherStrength) +
                 ",\"totalKB\":" + String((uint32_t)(totalBytes / 1024)) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
@@ -501,6 +540,9 @@ void handleRoot() {
       <option value="4">1:4 (FASTER)</option>
       <option value="8">1:8 (FASTEST)</option>
     </select>
+    <span style="margin-left:8px">DITHER:</span>
+    <input type="range" id="dither" min="0" max="8" step="1" value="4" style="width:80px" oninput="updateDitherText()" onchange="sendDither()">
+    <span id="dval" class="val">4</span>
   </div>
   <div id="stats">
     <span class="dot" id="dot"></span>
@@ -563,6 +605,13 @@ async function sendContrast() {
 async function sendScale() {
   const s = document.getElementById('scale').value;
   try { await fetch('/setscale?s=' + s); } catch(e) {}
+}
+function updateDitherText() {
+  document.getElementById('dval').innerText = document.getElementById('dither').value;
+}
+async function sendDither() {
+  const d = document.getElementById('dither').value;
+  try { await fetch('/setdither?d=' + d); } catch(e) {}
 }
 
 // --- Save ---
@@ -651,6 +700,10 @@ async function upd() {
       }
       if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) {
         document.getElementById('scale').value = s.scale;
+      }
+      if (s.dither !== undefined && document.activeElement !== document.getElementById('dither')) {
+        document.getElementById('dither').value = s.dither;
+        updateDitherText();
       }
 
       const now = Date.now();
@@ -951,6 +1004,7 @@ void setup() {
   server.on("/stats", handleStats);
   server.on("/setmode", handleSetMode);
   server.on("/setcontrast", handleSetContrast);
+  server.on("/setdither", handleSetDither);
   server.on("/setscale", handleSetScale);
   server.begin();
   Serial.println("Web server started");
