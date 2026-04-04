@@ -49,6 +49,7 @@ float imgBrightness = 0.0f;
 int16_t brightness_val = 0;
 uint8_t jpgScale = 1;
 uint8_t ditherStrength = 4;  // Bayer dither intensity: 0=off, 1-8
+uint8_t globalBgColor = 0;   // User-selected background color
 uint16_t currentJpgWidth = 320;
 uint16_t currentJpgHeight = 200;
 
@@ -108,7 +109,7 @@ void packC64Frame() {
   uint8_t* screen_ram = render_buffer + 8000;
   uint8_t* color_ram  = render_buffer + 9000;
   
-  uint8_t bgColor = 0; // Black global background
+  uint8_t bgColor = globalBgColor; // User-selected global background
   
   for (int cy = 0; cy < 25; cy++) {
     for (int cx = 0; cx < 40; cx++) {
@@ -325,6 +326,21 @@ void handleSetBrightness() {
   }
 }
 
+void handleSetBg() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("c")) {
+    int bg = server.arg("c").toInt();
+    if (bg >= 0 && bg <= 15) {
+      globalBgColor = (uint8_t)bg;
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid color value");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?c= param");
+  }
+}
+
 void handleSetContrast() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (server.hasArg("c")) {
@@ -391,6 +407,7 @@ void handleStats() {
                 ",\"brightness\":" + String(imgBrightness, 1) +
                 ",\"scale\":" + String(jpgScale) +
                 ",\"dither\":" + String(ditherStrength) +
+                ",\"bg\":" + String(globalBgColor) +
                 ",\"totalKB\":" + String((uint32_t)(totalBytes / 1024)) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
@@ -560,6 +577,13 @@ void handleRoot() {
       <option value="4">1:4 (FASTER)</option>
       <option value="8">1:8 (FASTEST)</option>
     </select>
+    <span style="margin-left:8px">BG (MC):</span>
+    <select id="bgcolor" onchange="sendBg()" style="padding:4px">
+      <option value="0">0:BLK</option><option value="1">1:WHT</option><option value="2">2:RED</option><option value="3">3:CYN</option>
+      <option value="4">4:PUR</option><option value="5">5:GRN</option><option value="6">6:BLU</option><option value="7">7:YEL</option>
+      <option value="8">8:ORG</option><option value="9">9:BRN</option><option value="10">10:LRD</option><option value="11">11:DGY</option>
+      <option value="12">12:MGY</option><option value="13">13:LGN</option><option value="14">14:LBL</option><option value="15">15:LGY</option>
+    </select>
     <span style="margin-left:8px">DITHER:</span>
     <input type="range" id="dither" min="0" max="8" step="1" value="4" style="width:80px" oninput="updateDitherText()" onchange="sendDither()">
     <span id="dval" class="val">4</span>
@@ -580,6 +604,7 @@ const c64Pal = [
 let running = true;
 let isHires = false;  // dynamic tracking based on mode prefix
 let currentClientMode = 'mc_color';
+let currentBgColor = 0;
 
 let lastStatsTime = 0;
 let lastFrames = 0;
@@ -629,6 +654,10 @@ async function sendBrightness() {
   const b = document.getElementById('brightness').value;
   try { await fetch('/setbrightness?b=' + b); } catch(e) {}
 }
+async function sendBg() {
+  const c = document.getElementById('bgcolor').value;
+  try { await fetch('/setbg?c=' + c); } catch(e) {}
+}
 async function sendScale() {
   const s = document.getElementById('scale').value;
   try { await fetch('/setscale?s=' + s); } catch(e) {}
@@ -654,7 +683,7 @@ async function save(t) {
       f[8002 + i] = bmp[8000 + i];
       f[9002 + i] = bmp[9000 + i];
     }
-    f[10002] = 0; // BG Color (Black)
+    f[10002] = currentBgColor; // BG Color
     download(f, 'img.koa');
   } else {
     f = new Uint8Array(14145);
@@ -669,7 +698,7 @@ async function save(t) {
       0xA9, 0x3B, 0x8D, 0x11, 0xD0, // LDA #$3B, STA $D011
       0xA9, isHires ? 0xC8 : 0xD8, 0x8D, 0x16, 0xD0, // LDA #$D8/$C8, STA $D016
       0xA9, 0x18, 0x8D, 0x18, 0xD0, // LDA #$18, STA $D018 (Screen $0400, Bitmap $2000)
-      0xA9, 0x00, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0, // LDA #0, STA border/bg
+      0xA9, currentBgColor, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0, // LDA #bg, STA border/bg
       0xA2, 0x00, // LDX #0
       // Memory Copy Loop: Screen RAM
       0xBD, 0x70, 0x08, 0x9D, 0x00, 0x04,
@@ -731,6 +760,10 @@ async function upd() {
       }
       if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) {
         document.getElementById('scale').value = s.scale;
+      }
+      if (s.bg !== undefined && document.activeElement !== document.getElementById('bgcolor')) {
+        currentBgColor = s.bg;
+        document.getElementById('bgcolor').value = s.bg;
       }
       if (s.dither !== undefined && document.activeElement !== document.getElementById('dither')) {
         document.getElementById('dither').value = s.dither;
@@ -795,7 +828,7 @@ async function upd() {
       ctx.putImageData(img, 0, 0);
     } else {
       const img = ctx.createImageData(160, 200);
-      let bgCol = c64Pal[0]; // Global Black
+      let bgCol = c64Pal[currentBgColor]; // Global User BG
       for (let by = 0; by < 200; by++) {
         let charRow = Math.floor(by / 8);
         let py = by % 8;
@@ -1034,6 +1067,7 @@ void setup() {
   server.on("/data", handleData);
   server.on("/stats", handleStats);
   server.on("/setmode", handleSetMode);
+  server.on("/setbg", handleSetBg);
   server.on("/setbrightness", handleSetBrightness);
   server.on("/setcontrast", handleSetContrast);
   server.on("/setdither", handleSetDither);
