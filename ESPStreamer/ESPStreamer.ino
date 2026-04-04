@@ -45,6 +45,8 @@ volatile uint64_t totalBytes = 0;
 // --- Image Adjustments ---
 float imgContrast = 1.0f;
 int16_t contrast_fp = 256;
+float imgBrightness = 0.0f;
+int16_t brightness_val = 0;
 uint8_t jpgScale = 1;
 uint8_t ditherStrength = 4;  // Bayer dither intensity: 0=off, 1-8
 uint16_t currentJpgWidth = 320;
@@ -76,10 +78,10 @@ inline uint8_t rgb565_to_c64(uint16_t p) {
   int g = (p >> 3) & 0xFC;
   int b = (p << 3) & 0xF8;
   
-  if (contrast_fp != 256) {
-    r = (int)((((r - 128) * contrast_fp) >> 8) + 128);
-    g = (int)((((g - 128) * contrast_fp) >> 8) + 128);
-    b = (int)((((b - 128) * contrast_fp) >> 8) + 128);
+  if (contrast_fp != 256 || brightness_val != 0) {
+    r = (int)((((r - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    g = (int)((((g - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    b = (int)((((b - 128) * contrast_fp) >> 8) + 128 + brightness_val);
     if(r<0) r=0; if(r>255) r=255;
     if(g<0) g=0; if(g>255) g=255;
     if(b<0) b=0; if(b>255) b=255;
@@ -207,8 +209,8 @@ inline int16_t get_gray(uint16_t p) {
   uint8_t g = (p >> 3) & 0xFC;
   uint8_t b = (p << 3) & 0xF8;
   int16_t gray = ((r + g + b) * 85) >> 8;
-  if (contrast_fp != 256) {
-    gray = (int16_t)((((int32_t)gray - 128) * contrast_fp) >> 8) + 128;
+  if (contrast_fp != 256 || brightness_val != 0) {
+    gray = (int16_t)((((int32_t)gray - 128) * contrast_fp) >> 8) + 128 + brightness_val;
     if (gray < 0) gray = 0;
     if (gray > 255) gray = 255;
   }
@@ -308,6 +310,17 @@ void handleSetMode() {
   }
 }
 
+void handleSetBrightness() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("b")) {
+    imgBrightness = server.arg("b").toFloat();
+    brightness_val = (int16_t)imgBrightness;
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "Missing ?b= param");
+  }
+}
+
 void handleSetContrast() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (server.hasArg("c")) {
@@ -371,6 +384,7 @@ void handleStats() {
                 ",\"nonZero\":" + String(nz) +
                 ",\"connected\":" + String(streamConnected ? 1 : 0) +
                 ",\"contrast\":" + String(imgContrast, 2) +
+                ",\"brightness\":" + String(imgBrightness, 1) +
                 ",\"scale\":" + String(jpgScale) +
                 ",\"dither\":" + String(ditherStrength) +
                 ",\"totalKB\":" + String((uint32_t)(totalBytes / 1024)) + "}";
@@ -438,11 +452,11 @@ void handleRoot() {
     display: flex; gap: 10px; margin-top: 16px; justify-content: center; flex-wrap: wrap;
   }
   .slider-container {
-    display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 12px; font-size: 13px; color: #a0b4ff;
+    display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; font-size: 13px; color: #a0b4ff; flex-wrap: wrap;
     background: rgba(0,0,0,0.2); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(100,140,255,0.2);
   }
   input[type=range] {
-    -webkit-appearance: none; width: 140px; background: rgba(100,140,255,0.2);
+    -webkit-appearance: none; width: 80px; background: rgba(100,140,255,0.2);
     height: 6px; border-radius: 3px; outline: none;
   }
   input[type=range]::-webkit-slider-thumb {
@@ -531,9 +545,11 @@ void handleRoot() {
     <button onclick="save('KOA')">&#x25B6; KOA</button>
   </div>
   <div class="slider-container">
-    <span>CONTRAST: <span id="cval" class="val">1.0</span></span>
-    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" style="width:100px" oninput="updateContrastText()" onchange="sendContrast()">
-    <span style="margin-left:8px">SCALE:</span>
+    <span>CT: <span id="cval" class="val">1.0</span></span>
+    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
+    <span>BR: <span id="bval" class="val">0</span></span>
+    <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()" onchange="sendBrightness()">
+    <span style="margin-left:4px">SCALE:</span>
     <select id="scale" onchange="sendScale()">
       <option value="1">1:1 (HQ)</option>
       <option value="2">1:2 (FAST)</option>
@@ -598,9 +614,16 @@ function updateModeUI() {
 function updateContrastText() {
   document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1);
 }
+function updateBrightnessText() {
+  document.getElementById('bval').innerText = document.getElementById('brightness').value;
+}
 async function sendContrast() {
   const c = document.getElementById('contrast').value;
   try { await fetch('/setcontrast?c=' + c); } catch(e) {}
+}
+async function sendBrightness() {
+  const b = document.getElementById('brightness').value;
+  try { await fetch('/setbrightness?b=' + b); } catch(e) {}
 }
 async function sendScale() {
   const s = document.getElementById('scale').value;
@@ -697,6 +720,10 @@ async function upd() {
       if (s.contrast !== undefined && document.activeElement !== document.getElementById('contrast')) {
         document.getElementById('contrast').value = s.contrast;
         updateContrastText();
+      }
+      if (s.brightness !== undefined && document.activeElement !== document.getElementById('brightness')) {
+        document.getElementById('brightness').value = s.brightness;
+        updateBrightnessText();
       }
       if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) {
         document.getElementById('scale').value = s.scale;
@@ -1003,6 +1030,7 @@ void setup() {
   server.on("/data", handleData);
   server.on("/stats", handleStats);
   server.on("/setmode", handleSetMode);
+  server.on("/setbrightness", handleSetBrightness);
   server.on("/setcontrast", handleSetContrast);
   server.on("/setdither", handleSetDither);
   server.on("/setscale", handleSetScale);
