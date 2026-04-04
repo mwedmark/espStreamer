@@ -70,7 +70,9 @@ const int8_t bayer8x8[8][8] = {
 };
 
 inline uint32_t manhattanDist(uint8_t c1, uint8_t c2) {
-  return abs(c64_pal_r[c1] - c64_pal_r[c2]) + abs(c64_pal_g[c1] - c64_pal_g[c2]) + abs(c64_pal_b[c1] - c64_pal_b[c2]);
+  return (abs(c64_pal_r[c1] - c64_pal_r[c2]) * 2) + 
+         (abs(c64_pal_g[c1] - c64_pal_g[c2]) * 4) + 
+         (abs(c64_pal_b[c1] - c64_pal_b[c2]));
 }
 
 inline uint8_t rgb565_to_c64(uint16_t p) {
@@ -90,7 +92,9 @@ inline uint8_t rgb565_to_c64(uint16_t p) {
   uint32_t best_dist = 0xFFFFFFFF;
   uint8_t best_col = 0;
   for (int i=0; i<16; i++) {
-    uint32_t dist = abs(r - c64_pal_r[i]) + abs(g - c64_pal_g[i]) + abs(b - c64_pal_b[i]);
+    uint32_t dist = (abs(r - c64_pal_r[i]) * 2) + 
+                    (abs(g - c64_pal_g[i]) * 4) + 
+                    (abs(b - c64_pal_b[i]));
     if (dist < best_dist) {
       best_dist = dist;
       best_col = i;
@@ -208,7 +212,7 @@ inline int16_t get_gray(uint16_t p) {
   uint8_t r = (p >> 8) & 0xF8;
   uint8_t g = (p >> 3) & 0xFC;
   uint8_t b = (p << 3) & 0xF8;
-  int16_t gray = ((r + g + b) * 85) >> 8;
+  int16_t gray = (r * 77 + g * 150 + b * 29) >> 8;
   if (contrast_fp != 256 || brightness_val != 0) {
     gray = (int16_t)((((int32_t)gray - 128) * contrast_fp) >> 8) + 128 + brightness_val;
     if (gray < 0) gray = 0;
