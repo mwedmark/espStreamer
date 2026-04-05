@@ -12,15 +12,19 @@ const char* streamPath = "/pc.mjpg";
 WebServer server(80);
 
 // --- Mode ---
-enum StreamMode { M_MC_GRAY, M_HR_GRAY, M_MC_COLOR, M_HR_COLOR };
+enum StreamMode { M_MC_GRAY, M_HR_GRAY, M_MC_COLOR, M_HR_COLOR, M_MC_FLI, M_MC_GRAY_FLI, M_MC_GRAY_IFLI };
 StreamMode currentMode = M_MC_COLOR;
+#define FLI_FRAME_SIZE 17001
+#define IFLI_FRAME_SIZE 34001
 #define IS_HIRES (currentMode == M_HR_GRAY || currentMode == M_HR_COLOR)
-#define IS_COLOR (currentMode == M_MC_COLOR || currentMode == M_HR_COLOR)
+#define IS_COLOR (currentMode == M_MC_COLOR || currentMode == M_HR_COLOR || currentMode == M_MC_FLI || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
+#define IS_FLI   (currentMode == M_MC_FLI || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
+#define IS_IFLI  (currentMode == M_MC_GRAY_IFLI)
 
 // --- Buffers ---
-uint8_t c64_buffer[20000];          // Two 10000 byte buffers (double buffering)
+uint8_t c64_buffer[68010];          // Two 34005 byte buffers (covers IFLI's 34K)
 volatile uint8_t active_buffer = 0; // The buffer currently being read by the web server (0 or 1)
-uint8_t* render_buffer = c64_buffer + 10000; // Pointer to the inactive buffer for writing
+uint8_t* render_buffer = c64_buffer + 34005; // Pointer to the inactive buffer for writing
 uint8_t temp_jpg_buffer[32000];     // Buffer for one JPEG frame (increased from 25K)
 uint8_t color_buffer[64000];        // Intermediate mapped colors
 
@@ -104,22 +108,156 @@ inline uint8_t rgb565_to_c64(uint16_t p) {
   return best_col;
 }
 
-void packC64Frame() {
-  uint8_t* bitmap_ram = render_buffer;
-  uint8_t* screen_ram = render_buffer + 8000;
-  uint8_t* color_ram  = render_buffer + 9000;
+// Map RGB to 5 C64 Greys with Bayer Dither
+inline uint8_t rgb565_to_dithered_gray(uint16_t p, int tx, int ty) {
+  int r = (p >> 8) & 0xF8;
+  int g = (p >> 3) & 0xFC;
+  int b = (p << 3) & 0xF8;
+  if (contrast_fp != 256 || brightness_val != 0) {
+    r = (int)((((r - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    g = (int)((((g - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    b = (int)((((b - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    if(r<0) r=0; if(r>255) r=255;
+    if(g<0) g=0; if(g>255) g=255;
+    if(b<0) b=0; if(b>255) b=255;
+  }
   
+  int16_t luma = (r * 77 + g * 153 + b * 26) >> 8;
+  if (ditherStrength > 0) {
+    luma += (bayer8x8[ty & 7][tx & 7] * ditherStrength) / 4;
+    if (luma < 0) luma = 0;
+    if (luma > 255) luma = 255;
+  }
+  
+  // 5 levels: Black(0), D.Grey(11), M.Grey(12), L.Grey(15), White(1)
+  if (luma < 32) return 0;
+  if (luma < 96) return 11;
+  if (luma < 160) return 12;
+  if (luma < 224) return 15;
+  return 1;
+}
+
+// Map RGB to 9 interlaced C64 Greys (Frame A in high nibble, Frame B in low nibble)
+inline uint8_t rgb565_to_ifli_gray(uint16_t p, int tx, int ty) {
+  int r = (p >> 8) & 0xF8;
+  int g = (p >> 3) & 0xFC;
+  int b = (p << 3) & 0xF8;
+  if (contrast_fp != 256 || brightness_val != 0) {
+    r = (int)((((r - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    g = (int)((((g - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    b = (int)((((b - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    if(r<0) r=0; if(r>255) r=255;
+    if(g<0) g=0; if(g>255) g=255;
+    if(b<0) b=0; if(b>255) b=255;
+  }
+  
+  int16_t luma = (r * 77 + g * 153 + b * 26) >> 8;
+  if (ditherStrength > 0) {
+    luma += (bayer8x8[ty & 7][tx & 7] * ditherStrength) / 4;
+    if (luma < 0) luma = 0;
+    if (luma > 255) luma = 255;
+  }
+  
+  bool odd = ((tx & 1) ^ (ty & 1));
+  uint8_t c1, c2;
+  
+  if (luma < 16)       { c1 = 0; c2 = 0; }
+  else if (luma < 48)  { c1 = 0; c2 = 11; }
+  else if (luma < 80)  { c1 = 11; c2 = 11; }
+  else if (luma < 112) { c1 = 11; c2 = 12; }
+  else if (luma < 144) { c1 = 12; c2 = 12; }
+  else if (luma < 176) { c1 = 12; c2 = 15; }
+  else if (luma < 208) { c1 = 15; c2 = 15; }
+  else if (luma < 240) { c1 = 15; c2 = 1; }
+  else                 { c1 = 1; c2 = 1; }
+  
+  if (odd) { uint8_t tmp = c1; c1 = c2; c2 = tmp; }
+  return (c1 << 4) | (c2 & 0x0F);
+}
+
+void packC64Frame() {
   uint8_t bgColor = globalBgColor; // User-selected global background
   
-  for (int cy = 0; cy < 25; cy++) {
-    for (int cx = 0; cx < 40; cx++) {
-      int cellIdx = cy * 40 + cx;
-      
-      if (IS_HIRES) {
+  int max_frames = IS_IFLI ? 2 : 1;
+  for (int frame = 0; frame < max_frames; frame++) {
+    uint8_t* base_ptr   = render_buffer + (frame * 17000);
+    uint8_t* bitmap_ram = base_ptr;
+    uint8_t* screen_ram = base_ptr + 8000;
+    uint8_t* color_ram  = base_ptr + 9000;
+    
+    auto get_col = [&](int idx) -> uint8_t {
+      uint8_t c_raw = color_buffer[idx];
+      return IS_IFLI ? (frame == 0 ? (c_raw >> 4) : (c_raw & 0x0F)) : c_raw;
+    };
+    
+    for (int cy = 0; cy < 25; cy++) {
+      for (int cx = 0; cx < 40; cx++) {
+        int cellIdx = cy * 40 + cx;
+        
+        if (IS_FLI) {
+          uint8_t* screens = base_ptr + 8000; 
+          uint8_t* fli_color_ram = base_ptr + 16000;
+          
+          int counts[16] = {0};
+          for (int py=0; py<8; py++) {
+            for (int px=0; px<4; px++) {
+              counts[get_col((cy*8 + py)*160 + (cx*4 + px))]++;
+            }
+          }
+          counts[bgColor] = -1;
+          uint8_t cellCol = 0; int mCell = -1;
+          for(int i=0; i<16; i++) { if(counts[i] > mCell) { mCell = counts[i]; cellCol = i; } }
+          if (mCell <= 0 || IS_IFLI) cellCol = 1; 
+          fli_color_ram[cellIdx] = cellCol;
+  
+          for (int py = 0; py < 8; py++) {
+            int lCounts[16] = {0};
+            for (int px=0; px<4; px++) {
+              lCounts[get_col((cy*8 + py)*160 + (cx*4 + px))]++;
+            }
+            lCounts[bgColor] = -1;
+            lCounts[cellCol] = -1;
+            uint8_t c1=0, c2=0; int m1=-1, m2=-1;
+            for(int i=0; i<16; i++){
+              if(lCounts[i]>m1){ m2=m1;c2=c1; m1=lCounts[i];c1=i; }
+              else if(lCounts[i]>m2){ m2=lCounts[i];c2=i; }
+            }
+            if(m1==-1) c1 = cellCol;
+            if(m2==-1) c2 = c1;
+            screens[py*1024 + cellIdx] = (c1 << 4) | (c2 & 0x0F);
+            
+            uint8_t byte = 0;
+            for (int px=0; px<4; px++) {
+              uint8_t c = get_col((cy*8 + py)*160 + (cx*4 + px));
+              uint32_t d0 = (int32_t)manhattanDist(c, bgColor);
+              uint32_t d1 = (int32_t)manhattanDist(c, c1);
+              uint32_t d2 = (int32_t)manhattanDist(c, c2);
+              uint32_t d3 = (int32_t)manhattanDist(c, cellCol);
+              
+              uint32_t dists[4] = {d0, d1, d2, d3};
+              uint8_t slots[4] = {0, 1, 2, 3};
+              for (int a = 0; a < 2; a++) {
+                for (int b = a+1; b < 4; b++) {
+                  if (dists[b] < dists[a]) {
+                    uint32_t td = dists[a]; dists[a] = dists[b]; dists[b] = td;
+                    uint8_t ts = slots[a]; slots[a] = slots[b]; slots[b] = ts;
+                  }
+                }
+              }
+              uint8_t bits = slots[0];
+              if (ditherStrength > 0) {
+                int32_t bayer = (int32_t)bayer8x8[py & 7][(cx*4 + px) & 7] * ditherStrength;
+                if ((int32_t)dists[1] - bayer < (int32_t)dists[0] + bayer) bits = slots[1];
+              }
+              byte |= (bits << ((3 - px) * 2));
+            }
+            bitmap_ram[cellIdx * 8 + py] = byte;
+          }
+      } else if (IS_HIRES) {
         int counts[16] = {0};
         for (int py=0; py<8; py++) {
           for (int px=0; px<8; px++) {
-            counts[color_buffer[(cy*8 + py)*320 + (cx*8 + px)]]++;
+            counts[get_col((cy*8 + py)*320 + (cx*8 + px))]++;
           }
         }
         
@@ -135,7 +273,7 @@ void packC64Frame() {
         for (int py=0; py<8; py++) {
           uint8_t byte = 0;
           for (int px=0; px<8; px++) {
-            uint8_t c = color_buffer[(cy*8 + py)*320 + (cx*8 + px)];
+            uint8_t c = get_col((cy*8 + py)*320 + (cx*8 + px));
             int32_t dbg = (int32_t)manhattanDist(c, bg);
             int32_t dfg = (int32_t)manhattanDist(c, fg);
             int32_t bayer = (ditherStrength > 0) ? (int32_t)bayer8x8[py & 7][px & 7] * ditherStrength : 0;
@@ -148,7 +286,7 @@ void packC64Frame() {
         int counts[16] = {0};
         for (int py=0; py<8; py++) {
           for (int px=0; px<4; px++) {
-            counts[color_buffer[(cy*8 + py)*160 + (cx*4 + px)]]++;
+            counts[get_col((cy*8 + py)*160 + (cx*4 + px))]++;
           }
         }
         
@@ -170,7 +308,7 @@ void packC64Frame() {
         for (int py=0; py<8; py++) {
           uint8_t byte = 0;
           for (int px=0; px<4; px++) {
-            uint8_t c = color_buffer[(cy*8 + py)*160 + (cx*4 + px)];
+            uint8_t c = get_col((cy*8 + py)*160 + (cx*4 + px));
             int32_t d0 = (int32_t)manhattanDist(c, bgColor);
             int32_t d1 = (int32_t)manhattanDist(c, c1);
             int32_t d2 = (int32_t)manhattanDist(c, c2);
@@ -205,6 +343,13 @@ void packC64Frame() {
         }
       }
     }
+  }
+}
+
+  if (IS_IFLI) {
+    render_buffer[34000] = globalBgColor;
+  } else if (IS_FLI) {
+    render_buffer[17000] = globalBgColor;
   }
 }
 
@@ -268,12 +413,20 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
       if (startX == endX) continue; 
 
       if (IS_COLOR) {
-        uint8_t c64col = rgb565_to_c64(bitmap[i + j * w]);
         int wTarget = IS_HIRES ? 320 : 160;
+        uint8_t c64col_std = 0;
+        if (currentMode != M_MC_GRAY_FLI && currentMode != M_MC_GRAY_IFLI) c64col_std = rgb565_to_c64(bitmap[i + j * w]);
+        
         for (int ty = startY; ty < endY; ty++) {
           for (int tx = startX; tx < endX; tx++) {
             if (ty < 200 && tx < wTarget) {
-              color_buffer[ty * wTarget + tx] = c64col;
+              if (currentMode == M_MC_GRAY_FLI) {
+                color_buffer[ty * wTarget + tx] = rgb565_to_dithered_gray(bitmap[i + j * w], tx, ty);
+              } else if (currentMode == M_MC_GRAY_IFLI) {
+                color_buffer[ty * wTarget + tx] = rgb565_to_ifli_gray(bitmap[i + j * w], tx, ty);
+              } else {
+                color_buffer[ty * wTarget + tx] = c64col_std;
+              }
             }
           }
         }
@@ -295,9 +448,10 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
 
 void handleData() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.setContentLength(10000);
+  size_t len = (IS_IFLI) ? IFLI_FRAME_SIZE : (IS_FLI ? FLI_FRAME_SIZE : 10000);
+  server.setContentLength(len);
   server.send(200, "application/octet-stream", "");
-  server.sendContent((const char*)(c64_buffer + active_buffer * 10000), 10000);
+  server.sendContent((const char*)(c64_buffer + active_buffer * 34005), len);
 }
 
 void handleSetMode() {
@@ -308,6 +462,9 @@ void handleSetMode() {
     else if (m == "hr_gray") currentMode = M_HR_GRAY;
     else if (m == "mc_color") currentMode = M_MC_COLOR;
     else if (m == "hr_color") currentMode = M_HR_COLOR;
+    else if (m == "mc_fli")   currentMode = M_MC_FLI;
+    else if (m == "mc_gray_fli") currentMode = M_MC_GRAY_FLI;
+    else if (m == "mc_gray_ifli") currentMode = M_MC_GRAY_IFLI;
     memset(c64_buffer, 0, sizeof(c64_buffer));
     server.send(200, "text/plain", m);
   } else {
@@ -387,8 +544,9 @@ void handleSetScale() {
 void handleStats() {
   // Count non-zero bytes for debug
   uint32_t nz = 0;
-  uint8_t* current_buf = c64_buffer + active_buffer * 10000;
-  for (int i = 0; i < 10000; i++) {
+  uint32_t checkSize = IS_IFLI ? 34000 : (IS_FLI ? 17000 : 10000);
+  uint8_t* current_buf = c64_buffer + active_buffer * 34005;
+  for (int i = 0; i < checkSize; i++) {
     if (current_buf[i] != 0) nz++;
   }
   nonZeroPixels = nz;
@@ -396,6 +554,9 @@ void handleStats() {
   if (currentMode == M_MC_GRAY) mStr = "mc_gray";
   else if (currentMode == M_HR_GRAY) mStr = "hr_gray";
   else if (currentMode == M_HR_COLOR) mStr = "hr_color";
+  else if (currentMode == M_MC_FLI)   mStr = "mc_fli";
+  else if (currentMode == M_MC_GRAY_FLI) mStr = "mc_gray_fli";
+  else if (currentMode == M_MC_GRAY_IFLI) mStr = "mc_gray_ifli";
   
   String json = "{\"frames\":" + String(frameCount) +
                 ",\"mode\":\"" + mStr + "\"" +
@@ -559,8 +720,10 @@ void handleRoot() {
     <select id="mode-sel" onchange="toggleMode()" style="padding:10px; font-size:14px; font-family:'Share Tech Mono'; background:#333; color:#fff; border:1px solid #666; cursor:pointer;">
       <option value="mc_gray">MULTI-COLOR GRAYSCALE</option>
       <option value="hr_gray">HI-RES GRAYSCALE</option>
-      <option value="mc_color" selected>MULTI-COLOR COLOR</option>
+      <option value="mc_color">MULTI-COLOR COLOR</option>
       <option value="hr_color">HI-RES COLOR</option>
+      <option value="mc_fli">MULTI-COLOR FLI</option>
+      <option value="mc_gray_fli">GRAYSCALE FLI</option>
     </select>
     <button onclick="save('PRG')">&#x25B6; PRG</button>
     <button onclick="save('KOA')">&#x25B6; KOA</button>
@@ -602,7 +765,10 @@ const c64Pal = [
   [119,119,119], [170,255,102], [0,136,255], [187,187,187]
 ];
 let running = true;
-let isHires = false;  // dynamic tracking based on mode prefix
+let isHires = false;  
+let isFLI = false;
+let isGrayFLI = false;
+let isIFLI = false;
 let currentClientMode = 'mc_color';
 let currentBgColor = 0;
 
@@ -636,6 +802,9 @@ async function toggleMode() {
 function updateModeUI() {
   document.getElementById('mode-sel').value = currentClientMode;
   isHires = currentClientMode.startsWith('hr_');
+  isFLI = currentClientMode.includes('_fli');
+  isGrayFLI = currentClientMode === 'mc_gray_fli';
+  isIFLI = currentClientMode === 'mc_gray_ifli';
   resizeCanvas(isHires);
 }
 
@@ -685,6 +854,83 @@ async function save(t) {
     }
     f[10002] = currentBgColor; // BG Color
     download(f, 'img.koa');
+  } else if (t === 'PRG' && isIFLI) {
+    f = new Uint8Array(49155); // fits up to $BFFF + 2
+    f[0] = 1; f[1] = 8; // $0801
+    f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+    const ifliAsm = [
+      0x78, // SEI
+      0xA9, 0x3B, 0x8D, 0x11, 0xD0,
+      0xA9, 0xD8, 0x8D, 0x16, 0xD0,
+      0xA9, currentBgColor, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0,
+      0xA9, 0x02, 0x85, 0x02,
+      0xA2, 0x00, 
+      0xBD, 0x00, 0x09, 0x9D, 0x00, 0xD8,
+      0xBD, 0xFA, 0x09, 0x9D, 0xFA, 0xD8,
+      0xBD, 0xF4, 0x0A, 0x9D, 0xF4, 0xD9,
+      0xBD, 0xEE, 0x0B, 0x9D, 0xEE, 0xDA,
+      0xE8, 0xE0, 0xFA, 0xD0, 0xE3,
+      0xAD, 0x12, 0xD0, 0xCD, 0x12, 0xD0, 0xF0, 0xFA,
+      0xAD, 0x12, 0xD0, 0xC9, 0x32, 0xD0, 0xF1, 
+      0xA5, 0x02, 0x49, 0x03, 0x85, 0x02,
+      0x8D, 0x00, 0xDD, 
+      0xA2, 0xC8, 
+      0xEA, 
+      0xAD, 0x12, 0xD0, 0x29, 0x07, 0x09, 0x38, 0x8D, 0x11, 0xD0, 
+      0xAD, 0x12, 0xD0, 0x29, 0x07, 0x0A, 0x0A, 0x0A, 0x0A, 0x09, 0x08, 0x8D, 0x18, 0xD0, 
+      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+      0xCA, 
+      0xD0, 0xD9, 
+      0x4C, 0x43, 0x08
+    ];
+    f.set(ifliAsm, 14);
+    const offset = addr => addr - 0x0801 + 2;
+    for(let i=0; i<1000; i++) f[offset(0x0900)+i] = bmp[16000+i];
+    for(let i=0; i<8192; i++) {
+        f[offset(0x4000)+i] = bmp[8000+i]; 
+        f[offset(0x6000)+i] = i < 8000 ? bmp[i] : 0;      
+        f[offset(0x8000)+i] = bmp[17000+8000+i]; 
+        f[offset(0xA000)+i] = i < 8000 ? bmp[17000+i] : 0;      
+    }
+    download(f, 'ifli.prg');
+  } else if (t === 'PRG' && isFLI) {
+    f = new Uint8Array(30721); // $0801 to $7FFF
+    f[0] = 1; f[1] = 8; // $0801
+    f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+    // FLI Player ASM (Fixed targets and 63-cycle timing)
+    const fliAsm = [
+      0x78, // SEI ($080D)
+      0xA9, 0x02, 0x8D, 0x00, 0xDD, // VIC Bank 1
+      0xA9, 0x3B, 0x8D, 0x11, 0xD0, // $D011
+      0xA9, 0xD8, 0x8D, 0x16, 0xD0, // $D016
+      0xA9, currentBgColor, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0,
+      0xA2, 0x00, // Copy Color RAM ($0827)
+      0xBD, 0x00, 0x10, 0x9D, 0x00, 0xD8,
+      0xBD, 0xFA, 0x10, 0x9D, 0xFA, 0xD8,
+      0xBD, 0xF4, 0x11, 0x9D, 0xF4, 0xD9,
+      0xBD, 0xEE, 0x12, 0x9D, 0xEE, 0xDA,
+      0xE8, 0xE0, 0xFA, 0xD0, 0xE3,
+      // Main Sync Loop ($0844)
+      0xAD, 0x12, 0xD0, 0xCD, 0x12, 0xD0, 0xF0, 0xFA, // Wait line change
+      0xAD, 0x12, 0xD0, 0xC9, 0x32, 0xD0, 0xF1, // Wait line $32 (Target $0844)
+      0xA2, 0xC8, // 200 lines ($0853)
+      0xEA, // NOP (1 more cycle for entry)
+      // Raster Line Loop ($0856)
+      0xAD, 0x12, 0xD0, 0x29, 0x07, 0x09, 0x38, 0x8D, 0x11, 0xD0, // 12 cycles
+      0xAD, 0x12, 0xD0, 0x29, 0x07, 0x0A, 0x0A, 0x0A, 0x0A, 0x09, 0x08, 0x8D, 0x18, 0xD0, // 20 cycles
+      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, // 11 NOPs (22 cycles)
+      0xCA, // 2 cycles
+      0xD0, 0xD9, // BNE $0856 (3 cycles, target offset -39)
+      0x4C, 0x44, 0x08 // JMP $0844
+    ];
+    f.set(fliAsm, 14);
+    // Screens @ $4000: Offset (0x4000 - 0x0801) + 2 = 14337
+    for(let i=0; i<8192; i++) f[14337+i] = bmp[8000+i];
+    // Bitmap @ $6000: Offset (0x6000 - 0x0801) + 2 = 22529
+    for(let i=0; i<8000; i++) f[22529+i] = bmp[i];
+    // Color RAM temp storage @ $1000: Offset (0x1000 - 0x0801) + 2 = 2049
+    for(let i=0; i<1000; i++) f[2049+i] = bmp[16000+i];
+    download(f, 'fli.prg');
   } else {
     f = new Uint8Array(14145);
     f[0] = 1; f[1] = 8; // Load address $0801
@@ -801,7 +1047,73 @@ async function upd() {
     const cv  = document.getElementById('c');
     const ctx = cv.getContext('2d');
 
-    if (isHires) {
+    if (isIFLI) {
+      const img = ctx.createImageData(160, 200);
+      const bgCol = c64Pal[d[34000]]; // Global Bg
+      for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8);
+        let py = by % 8;
+        let screenBank = py * 1024;
+        for (let bx = 0; bx < 40; bx++) {
+          let cellIdx = charRow * 40 + bx;
+          // Frame A
+          let byteA = d[cellIdx * 8 + py];
+          let sByA = d[8000 + screenBank + cellIdx];
+          let cByA = d[16000 + cellIdx];
+          let colsA = [ bgCol, c64Pal[sByA >> 4], c64Pal[sByA & 0x0F], c64Pal[cByA & 0x0F] ];
+          
+          // Frame B (offset +17000)
+          let cellB = cellIdx + 17000;
+          let offB = 17000;
+          let byteB2 = d[offB + cellIdx * 8 + py];
+          let sByB = d[offB + 8000 + screenBank + cellIdx];
+          let cByB = d[offB + 16000 + cellIdx];
+          let colsB = [ bgCol, c64Pal[sByB >> 4], c64Pal[sByB & 0x0F], c64Pal[cByB & 0x0F] ];
+          
+          for (let px = 0; px < 4; px++) {
+            let colA = colsA[(byteA >> ((3 - px) * 2)) & 3] || [0,0,0];
+            let colB = colsB[(byteB2 >> ((3 - px) * 2)) & 3] || [0,0,0];
+            let outIdx = (by * 160 + bx * 4 + px) * 4;
+            img.data[outIdx]   = (colA[0] + colB[0]) >> 1;
+            img.data[outIdx+1] = (colA[1] + colB[1]) >> 1;
+            img.data[outIdx+2] = (colA[2] + colB[2]) >> 1;
+            img.data[outIdx+3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      ctx.fillStyle = "rgba(200, 200, 200, 0.9)";
+      ctx.font = "bold 8px monospace";
+      ctx.fillText("IFLI GRAY", 110, 10);
+    } else if (isFLI) {
+      const img = ctx.createImageData(160, 200);
+      const bgCol = c64Pal[d[17000]]; // Global Bg
+      for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8);
+        let py = by % 8;
+        let screenBank = py * 1024;
+        for (let bx = 0; bx < 40; bx++) {
+          let cellIdx = charRow * 40 + bx;
+          let byte = d[cellIdx * 8 + py];
+          let screenByte = d[8000 + screenBank + cellIdx];
+          let colorByte  = d[16000 + cellIdx];
+          let cols = [ bgCol, c64Pal[screenByte >> 4], c64Pal[screenByte & 0x0F], c64Pal[colorByte & 0x0F] ];
+          
+          for (let px = 0; px < 4; px++) {
+            let col = cols[(byte >> ((3 - px) * 2)) & 3] || [0,0,0];
+            let outIdx = (by * 160 + bx * 4 + px) * 4;
+            img.data[outIdx]   = col[0];
+            img.data[outIdx+1] = col[1];
+            img.data[outIdx+2] = col[2];
+            img.data[outIdx+3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      ctx.fillStyle = isGrayFLI ? "rgba(200, 200, 200, 0.9)" : "rgba(0, 255, 180, 0.7)";
+      ctx.font = "bold 8px monospace";
+      ctx.fillText(isGrayFLI ? "GRAY FLI" : "FLI", isGrayFLI ? 120 : 145, 10);
+    } else if (isHires) {
       const img = ctx.createImageData(320, 200);
       for (let by = 0; by < 200; by++) {
         let charRow = Math.floor(by / 8);
@@ -1134,8 +1446,8 @@ void loop() {
         }
 
         // Setup render buffer and clear it BEFORE decoding starts (so bitwise OR works)
-        render_buffer = c64_buffer + (1 - active_buffer) * 10000;
-        memset(render_buffer, 0, 10000);
+        render_buffer = c64_buffer + (1 - active_buffer) * 34005;
+        memset(render_buffer, 0, 34005);
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
         lastDecodeResult = (uint32_t)res;
@@ -1153,7 +1465,8 @@ void loop() {
           frameCount++;
           
           uint32_t nz = 0;
-          for (int i = 0; i < 10000; i++) {
+          uint32_t checkSize = IS_IFLI ? 34000 : (IS_FLI ? 17000 : 10000);
+          for (int i = 0; i < checkSize; i++) {
             if (render_buffer[i] != 0) nz++;
           }
           nonZeroPixels = nz;
