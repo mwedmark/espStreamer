@@ -217,13 +217,13 @@ void packC64Frame() {
             }
             lCounts[bgColor] = -1;
             lCounts[cellCol] = -1;
-            uint8_t c1=0, c2=0; int m1=-1, m2=-1;
+            uint8_t c1=0, c2=0; int m1=0, m2=0;
             for(int i=0; i<16; i++){
               if(lCounts[i]>m1){ m2=m1;c2=c1; m1=lCounts[i];c1=i; }
               else if(lCounts[i]>m2){ m2=lCounts[i];c2=i; }
             }
-            if(m1==-1) c1 = cellCol;
-            if(m2==-1) c2 = c1;
+            if(m1==0) c1 = cellCol;
+            if(m2==0) c2 = c1;
             screens[py*1024 + cellIdx] = (c1 << 4) | (c2 & 0x0F);
             
             uint8_t byte = 0;
@@ -293,14 +293,15 @@ void packC64Frame() {
         counts[bgColor] = -1; 
         
         uint8_t c1=0, c2=0, c3=0;
-        int m1=-1, m2=-1, m3=-1;
+        int m1=0, m2=0, m3=0;
         for(int i=0;i<16;i++){
           if(counts[i]>m1){ m3=m2;c3=c2; m2=m1;c2=c1; m1=counts[i];c1=i; }
           else if(counts[i]>m2){ m3=m2;c3=c2; m2=counts[i];c2=i; }
           else if(counts[i]>m3){ m3=counts[i];c3=i; }
         }
-        if(m2==-1) c2=c1;
-        if(m3==-1) c3=c1;
+        if(m1==0) c1=1; // Fallback if perfectly solid bgColor
+        if(m2==0) c2=c1;
+        if(m3==0) c3=c1;
         
         screen_ram[cellIdx] = (c1 << 4) | (c2 & 0x0F);
         color_ram[cellIdx]  = c3;
@@ -724,6 +725,7 @@ void handleRoot() {
       <option value="hr_color">HI-RES COLOR</option>
       <option value="mc_fli">MULTI-COLOR FLI</option>
       <option value="mc_gray_fli">GRAYSCALE FLI</option>
+      <option value="mc_gray_ifli">GRAYSCALE IFLI</option>
     </select>
     <button onclick="save('PRG')">&#x25B6; PRG</button>
     <button onclick="save('KOA')">&#x25B6; KOA</button>
@@ -897,31 +899,40 @@ async function save(t) {
     f = new Uint8Array(30721); // $0801 to $7FFF
     f[0] = 1; f[1] = 8; // $0801
     f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
-    // FLI Player ASM (Fixed targets and 63-cycle timing)
+    // FLI Player ASM (Table driven exactly 23 cycles + 40 DMA = 63 cycles)
     const fliAsm = [
-      0x78, // SEI ($080D)
-      0xA9, 0x02, 0x8D, 0x00, 0xDD, // VIC Bank 1
-      0xA9, 0x3B, 0x8D, 0x11, 0xD0, // $D011
-      0xA9, 0xD8, 0x8D, 0x16, 0xD0, // $D016
-      0xA9, currentBgColor, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0,
-      0xA2, 0x00, // Copy Color RAM ($0827)
+      0x78, // SEI
+      // Pre-calculate tables at $0900 (D011) and $0A00 (D018)
+      0xA2, 0x00, 
+      0x8A, 0x29, 0x07, 0x09, 0x38, 0x9D, 0x00, 0x09, 
+      0x8A, 0x29, 0x07, 0x0A, 0x0A, 0x0A, 0x0A, 0x09, 0x08, 0x9D, 0x00, 0x0A, 
+      0xE8, 0xE0, 0xC8, 0xD0, 0xE7,
+      // Color RAM Init
+      0xA2, 0x00,
       0xBD, 0x00, 0x10, 0x9D, 0x00, 0xD8,
       0xBD, 0xFA, 0x10, 0x9D, 0xFA, 0xD8,
       0xBD, 0xF4, 0x11, 0x9D, 0xF4, 0xD9,
       0xBD, 0xEE, 0x12, 0x9D, 0xEE, 0xDA,
       0xE8, 0xE0, 0xFA, 0xD0, 0xE3,
-      // Main Sync Loop ($0844)
-      0xAD, 0x12, 0xD0, 0xCD, 0x12, 0xD0, 0xF0, 0xFA, // Wait line change
-      0xAD, 0x12, 0xD0, 0xC9, 0x32, 0xD0, 0xF1, // Wait line $32 (Target $0844)
-      0xA2, 0xC8, // 200 lines ($0853)
-      0xEA, // NOP (1 more cycle for entry)
-      // Raster Line Loop ($0856)
-      0xAD, 0x12, 0xD0, 0x29, 0x07, 0x09, 0x38, 0x8D, 0x11, 0xD0, // 12 cycles
-      0xAD, 0x12, 0xD0, 0x29, 0x07, 0x0A, 0x0A, 0x0A, 0x0A, 0x09, 0x08, 0x8D, 0x18, 0xD0, // 20 cycles
-      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, // 11 NOPs (22 cycles)
-      0xCA, // 2 cycles
-      0xD0, 0xD9, // BNE $0856 (3 cycles, target offset -39)
-      0x4C, 0x44, 0x08 // JMP $0844
+      // Setup Initial Video Registers
+      0xA9, 0x3B, 0x8D, 0x11, 0xD0,
+      0xA9, 0xD8, 0x8D, 0x16, 0xD0,
+      0xA9, currentBgColor, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0,
+      0xA9, 0x02, 0x8D, 0x00, 0xDD,
+      // l_wait: Wait for raster $F8
+      0xAD, 0x12, 0xD0, 0xC9, 0xF8, 0xD0, 0xF9,
+      // l_sync: Wait for raster $2F
+      0xAD, 0x12, 0xD0, 0xC9, 0x2F, 0xD0, 0xF9,
+      // l_s2: Wait exactly until $30 starts
+      0xA9, 0x30, 0xCD, 0x12, 0xD0, 0xD0, 0xFB,
+      // Delay to align STA $D011 exactly after badline DMA ends
+      0xA0, 0x00, 0xA2, 0x09, 0xCA, 0xD0, 0xFD,
+      // l_fli: 23 Cycle loop (23 CPU + 40 DMA = 63 cycles exactly)
+      0xB9, 0x00, 0x09, 0x8D, 0x11, 0xD0,
+      0xB9, 0x00, 0x0A, 0x8D, 0x18, 0xD0,
+      0xC8, 0xC0, 0xC8, 0xD0, 0xEF,
+      // Back to wait
+      0x4C, 0x5F, 0x08
     ];
     f.set(fliAsm, 14);
     // Screens @ $4000: Offset (0x4000 - 0x0801) + 2 = 14337
