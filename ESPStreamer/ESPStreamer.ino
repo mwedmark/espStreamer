@@ -52,6 +52,7 @@ int16_t contrast_fp = 256;
 float imgBrightness = 0.0f;
 int16_t brightness_val = 0;
 uint8_t jpgScale = 1;
+uint8_t scalingMode = 0;   // 0=Stretch, 1=Fit (letterbox), 2=Crop (zoom)
 uint8_t ditherStrength = 4;  // Bayer dither intensity: 0=off, 1-8
 uint8_t globalBgColor = 0;   // User-selected background color
 uint16_t currentJpgWidth = 320;
@@ -542,6 +543,21 @@ void handleSetScale() {
   }
 }
 
+void handleSetScaling() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("s")) {
+    int s = server.arg("s").toInt();
+    if (s >= 0 && s <= 2) {
+      scalingMode = (uint8_t)s;
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid value (0-2)");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?s= param");
+  }
+}
+
 void handleStats() {
   // Count non-zero bytes for debug
   uint32_t nz = 0;
@@ -568,9 +584,10 @@ void handleStats() {
                 ",\"contrast\":" + String(imgContrast, 2) +
                 ",\"brightness\":" + String(imgBrightness, 1) +
                 ",\"scale\":" + String(jpgScale) +
-                ",\"dither\":" + String(ditherStrength) +
-                ",\"bg\":" + String(globalBgColor) +
-                ",\"totalKB\":" + String((uint32_t)(totalBytes / 1024)) + "}";
+                ",\"dither\":"    + String(ditherStrength) +
+                ",\"bg\":"        + String(globalBgColor) +
+                ",\"scaling\":"   + String(scalingMode) +
+                ",\"totalKB\":"   + String((uint32_t)(totalBytes / 1024)) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
 }
@@ -742,6 +759,12 @@ void handleRoot() {
       <option value="4">1:4 (FASTER)</option>
       <option value="8">1:8 (FASTEST)</option>
     </select>
+    <span style="margin-left:8px">RATIO:</span>
+    <select id="scaling" onchange="sendScaling()">
+      <option value="0">STRETCH</option>
+      <option value="1">FIT</option>
+      <option value="2">CROP</option>
+    </select>
     <span style="margin-left:8px">BG (MC):</span>
     <select id="bgcolor" onchange="sendBg()" style="padding:4px">
       <option value="0">0:BLK</option><option value="1">1:WHT</option><option value="2">2:RED</option><option value="3">3:CYN</option>
@@ -832,6 +855,10 @@ async function sendBg() {
 async function sendScale() {
   const s = document.getElementById('scale').value;
   try { await fetch('/setscale?s=' + s); } catch(e) {}
+}
+async function sendScaling() {
+  const s = document.getElementById('scaling').value;
+  try { await fetch('/setscaling?s=' + s); } catch(e) {}
 }
 function updateDitherText() {
   document.getElementById('dval').innerText = document.getElementById('dither').value;
@@ -1051,6 +1078,9 @@ async function upd() {
       }
       if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) {
         document.getElementById('scale').value = s.scale;
+      }
+      if (s.scaling !== undefined && document.activeElement !== document.getElementById('scaling')) {
+        document.getElementById('scaling').value = s.scaling;
       }
       if (s.bg !== undefined && document.activeElement !== document.getElementById('bgcolor')) {
         currentBgColor = s.bg;
@@ -1429,6 +1459,7 @@ void setup() {
   server.on("/setcontrast", handleSetContrast);
   server.on("/setdither", handleSetDither);
   server.on("/setscale", handleSetScale);
+  server.on("/setscaling", handleSetScaling);
   server.begin();
   Serial.println("Web server started");
 }
@@ -1478,21 +1509,70 @@ void loop() {
         currentJpgHeight = h / jpgScale;
         //Serial.printf("[MJPG] JPEG dimensions: %dx%d (scaled: %dx%d)\n", w, h, currentJpgWidth, currentJpgHeight);
 
-        // Precalculate mapping tables
+        // Precalculate mapping tables (aspect-ratio-aware)
         int targetW = IS_HIRES ? 320 : 160;
         int targetH = 200;
+        int pixelAspect = IS_HIRES ? 1 : 2; // MC logical pixels are 2x wide visually
+
+        int scaledLogicalW = targetW, scaledLogicalH = targetH;
+        int offsetX = 0, offsetY = 0;
+        int srcCropX = 0, srcCropY = 0;
+        int srcCropW = currentJpgWidth, srcCropH = currentJpgHeight;
+
+        if (scalingMode == 1) {
+          // FIT: letterbox/pillarbox, whole image visible with black borders
+          float srcAspect = (float)currentJpgWidth / currentJpgHeight;
+          float dstAspect = (float)(targetW * pixelAspect) / targetH;
+          if (srcAspect > dstAspect) {
+            scaledLogicalW = targetW;
+            float scale = (float)(targetW * pixelAspect) / currentJpgWidth;
+            scaledLogicalH = (int)(currentJpgHeight * scale);
+            offsetY = (targetH - scaledLogicalH) / 2;
+          } else {
+            scaledLogicalH = targetH;
+            float scale = (float)targetH / currentJpgHeight;
+            scaledLogicalW = (int)((float)currentJpgWidth * scale / pixelAspect);
+            offsetX = (targetW - scaledLogicalW) / 2;
+          }
+        } else if (scalingMode == 2) {
+          // CROP: center-crop source to fill screen at correct aspect
+          float srcAspect = (float)currentJpgWidth / currentJpgHeight;
+          float dstAspect = (float)(targetW * pixelAspect) / targetH;
+          if (srcAspect > dstAspect) {
+            // Source wider: crop left/right
+            srcCropW = (int)((float)currentJpgHeight * (targetW * pixelAspect) / targetH);
+            srcCropX = (currentJpgWidth - srcCropW) / 2;
+          } else {
+            // Source taller: crop top/bottom
+            srcCropH = (int)((float)currentJpgWidth * targetH / (targetW * pixelAspect));
+            srcCropY = (currentJpgHeight - srcCropH) / 2;
+          }
+        }
+        // scalingMode == 0 (STRETCH): defaults fill the entire target
+
         for (int i = 0; i < currentJpgWidth && i < 1280; i++) {
-          mapX_start[i] = (i * targetW) / currentJpgWidth;
-          mapX_end[i]   = ((i + 1) * targetW) / currentJpgWidth;
+          if (scalingMode == 2) {
+            if (i < srcCropX || i >= srcCropX + srcCropW) { mapX_start[i] = mapX_end[i] = 0; }
+            else { int ci = i - srcCropX; mapX_start[i] = (ci * scaledLogicalW) / srcCropW; mapX_end[i] = ((ci+1) * scaledLogicalW) / srcCropW; }
+          } else {
+            mapX_start[i] = offsetX + (i * scaledLogicalW) / currentJpgWidth;
+            mapX_end[i]   = offsetX + ((i + 1) * scaledLogicalW) / currentJpgWidth;
+          }
         }
         for (int i = 0; i < currentJpgHeight && i < 1024; i++) {
-          mapY_start[i] = (i * targetH) / currentJpgHeight;
-          mapY_end[i]   = ((i + 1) * targetH) / currentJpgHeight;
+          if (scalingMode == 2) {
+            if (i < srcCropY || i >= srcCropY + srcCropH) { mapY_start[i] = mapY_end[i] = 0; }
+            else { int ci = i - srcCropY; mapY_start[i] = (ci * scaledLogicalH) / srcCropH; mapY_end[i] = ((ci+1) * scaledLogicalH) / srcCropH; }
+          } else {
+            mapY_start[i] = offsetY + (i * scaledLogicalH) / currentJpgHeight;
+            mapY_end[i]   = offsetY + ((i + 1) * scaledLogicalH) / currentJpgHeight;
+          }
         }
 
         // Setup render buffer and clear it BEFORE decoding starts (so bitwise OR works)
         render_buffer = c64_buffer + (1 - active_buffer) * 34005;
         memset(render_buffer, 0, 34005);
+        if (scalingMode > 0) memset(color_buffer, 0, sizeof(color_buffer)); // clear black-bar areas for FIT/CROP
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
         lastDecodeResult = (uint32_t)res;
