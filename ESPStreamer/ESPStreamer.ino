@@ -11,6 +11,401 @@ const char* streamPath = "/pc.mjpg";
 
 WebServer server(80);
 
+static const char INDEX_HTML[] PROGMEM = R"rawhtml(
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>C64 LIVE ENCODER</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    color: #e0e0ff;
+    font-family: 'Share Tech Mono', monospace;
+    padding: 20px;
+  }
+  h2 {
+    font-size: 28px;
+    letter-spacing: 6px;
+    margin: 20px 0;
+    text-shadow: 0 0 20px rgba(100, 140, 255, 0.6);
+    background: linear-gradient(90deg, #6c8cff, #a87fff, #6c8cff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .container {
+    background: rgba(20, 20, 50, 0.7);
+    border: 1px solid rgba(100, 140, 255, 0.3);
+    border-radius: 16px;
+    padding: 24px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+  canvas {
+    width: 640px; height: 400px;
+    image-rendering: pixelated;
+    border: 3px solid rgba(100, 140, 255, 0.4);
+    border-radius: 8px;
+    background: #000;
+    box-shadow: 0 0 30px rgba(80, 120, 255, 0.15), inset 0 0 60px rgba(0,0,0,0.5);
+    display: block;
+  }
+  .mode-badge {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 3px;
+    margin-bottom: 8px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    display: inline-block;
+    transition: all 0.3s;
+  }
+  .mode-badge.mc  { color: #ffd080; background: rgba(255,180,0,0.10); border: 1px solid rgba(255,180,0,0.3); }
+  .mode-badge.hr  { color: #80ffcc; background: rgba(0,255,180,0.10); border: 1px solid rgba(0,255,180,0.3); }
+  .badge-wrap { display:flex; justify-content:center; margin-bottom:10px; }
+  .controls {
+    display: flex; gap: 10px; margin-top: 16px; justify-content: center; flex-wrap: wrap;
+  }
+  .slider-container {
+    display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; font-size: 13px; color: #a0b4ff; flex-wrap: wrap;
+    background: rgba(0,0,0,0.2); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(100,140,255,0.2);
+  }
+  input[type=range] {
+    -webkit-appearance: none; width: 80px; background: rgba(100,140,255,0.2);
+    height: 6px; border-radius: 3px; outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #6c8cff; cursor: pointer; box-shadow: 0 0 10px rgba(100,140,255,0.5);
+  }
+  select {
+    appearance: none; -webkit-appearance: none;
+    background: rgba(100,140,255,0.2);
+    color: #a0ff90; padding: 4px 12px;
+    border: 1px solid rgba(100,140,255,0.4); border-radius: 4px;
+    font-family: inherit; font-size: 13px; font-weight: bold;
+    cursor: pointer; outline: none;
+  }
+  select option { background: #16213e; color: #a0b4ff; }
+  button {
+    padding: 10px 28px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 14px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    background: linear-gradient(180deg, rgba(100,140,255,0.2), rgba(60,80,180,0.3));
+    color: #a0b4ff;
+    border: 1px solid rgba(100,140,255,0.4);
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+  button:hover {
+    background: linear-gradient(180deg, rgba(100,140,255,0.4), rgba(60,80,180,0.5));
+    box-shadow: 0 0 16px rgba(100,140,255,0.3);
+    color: #fff;
+  }
+  #btn-mode.mc {
+    background: linear-gradient(180deg, rgba(255,180,0,0.15), rgba(180,100,0,0.25));
+    color: #ffd080;
+    border-color: rgba(255,180,0,0.4);
+  }
+  #btn-mode.mc:hover {
+    background: linear-gradient(180deg, rgba(255,180,0,0.35), rgba(180,100,0,0.45));
+    box-shadow: 0 0 16px rgba(255,160,0,0.3);
+    color: #fff;
+  }
+  #btn-mode.hr {
+    background: linear-gradient(180deg, rgba(0,255,180,0.15), rgba(0,130,100,0.25));
+    color: #80ffcc;
+    border-color: rgba(0,255,180,0.4);
+  }
+  #btn-mode.hr:hover {
+    background: linear-gradient(180deg, rgba(0,255,180,0.35), rgba(0,130,100,0.45));
+    box-shadow: 0 0 16px rgba(0,255,160,0.3);
+    color: #fff;
+  }
+  #stats {
+    margin-top: 16px;
+    font-size: 12px;
+    color: #7088cc;
+    text-align: center;
+    line-height: 1.8;
+  }
+  #stats .val { color: #a0ff90; }
+  #stats .err { color: #ff6060; }
+  .dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-right: 6px;
+    background: #444;
+    transition: background 0.3s;
+  }
+  .dot.on { background: #40ff40; box-shadow: 0 0 8px #40ff40; }
+</style>
+</head><body>
+<h2>&#x25C8; C64 LIVE ENCODER &#x25C8;</h2>
+<div class="container">
+  <div class="badge-wrap">
+    <span class="mode-badge mc" id="badge" style="display:none;"></span>
+  </div>
+  <canvas id="c" width="160" height="200"></canvas>
+  <div class="controls">
+    <select id="mode-sel" onchange="toggleMode()" style="padding:10px; font-size:14px; font-family:'Share Tech Mono'; background:#333; color:#fff; border:1px solid #666; cursor:pointer;">
+      <option value="mc_gray">MULTI-COLOR GRAYSCALE</option>
+      <option value="hr_gray">HI-RES GRAYSCALE</option>
+      <option value="mc_color">MULTI-COLOR COLOR</option>
+      <option value="hr_color">HI-RES COLOR</option>
+      <option value="mc_fli">MULTI-COLOR FLI</option>
+      <option value="mc_gray_fli">GRAYSCALE FLI</option>
+      <option value="mc_gray_ifli">GRAYSCALE IFLI</option>
+    </select>
+    <button onclick="save('PRG')">&#x25B6; PRG</button>
+    <button onclick="save('KOA')">&#x25B6; KOA</button>
+    <button onclick="save('CRT')">&#x25B6; CRT</button>
+  </div>
+  <div class="slider-container">
+    <span>CT: <span id="cval" class="val">1.0</span></span>
+    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
+    <span>BR: <span id="bval" class="val">0</span></span>
+    <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()" onchange="sendBrightness()">
+    <span style="margin-left:4px">SCALE:</span>
+    <select id="scale" onchange="sendScale()">
+      <option value="1">1:1 (HQ)</option>
+      <option value="2">1:2 (FAST)</option>
+      <option value="4">1:4 (FASTER)</option>
+      <option value="8">1:8 (FASTEST)</option>
+    </select>
+    <span style="margin-left:8px">RATIO:</span>
+    <select id="scaling" onchange="sendScaling()">
+      <option value="0">STRETCH</option>
+      <option value="1">FIT</option>
+      <option value="2">CROP</option>
+    </select>
+    <span style="margin-left:8px">BG (MC):</span>
+    <select id="bgcolor" onchange="sendBg()" style="padding:4px">
+      <option value="0">0:BLK</option><option value="1">1:WHT</option><option value="2">2:RED</option><option value="3:CYN">3:CYN</option>
+      <option value="4">4:PUR</option><option value="5">5:GRN</option><option value="6">6:BLU</option><option value="7">7:YEL</option>
+      <option value="8">8:ORG</option><option value="9">9:BRN</option><option value="10">10:LRD</option><option value="11">11:DGY</option>
+      <option value="12">12:MGY</option><option value="13">13:LGN</option><option value="14">14:LBL</option><option value="15">15:LGY</option>
+    </select>
+    <span style="margin-left:8px">DITHER:</span>
+    <select id="ditherType" onchange="sendDitherType()">
+      <option value="0">NONE</option>
+      <option value="1">BAYER 4x4</option>
+      <option value="2" selected>BAYER 8x8</option>
+      <option value="3">WHITE NOISE</option>
+      <option value="4">BLUE NOISE</option>
+      <option value="5">FLOYD-STEINBERG</option>
+    </select>
+    <span style="margin-left:4px">STR:</span>
+    <input type="range" id="dither" min="0" max="8" step="1" value="4" style="width:80px" oninput="updateDitherText()" onchange="sendDither()">
+    <span id="dval" class="val">4</span>
+  </div>
+  <div id="stats">
+    <span class="dot" id="dot"></span>
+    <span id="stxt">Connecting...</span>
+  </div>
+</div>
+
+<script>
+const c64Pal = [
+  [0,0,0], [255,255,255], [136,0,0], [170,255,238],
+  [204,68,204], [0,204,85], [0,0,170], [238,238,119],
+  [221,136,85], [102,68,0], [255,119,119], [51,51,51],
+  [119,119,119], [170,255,102], [0,136,255], [187,187,187]
+];
+let running = true, isHires = false, isFLI = false, isGrayFLI = false, isIFLI = false, currentClientMode = 'mc_color', currentBgColor = 0;
+let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 0;
+
+function resizeCanvas(hires) {
+  const cv = document.getElementById('c');
+  cv.width = hires ? 320 : 160; cv.height = 200;
+  cv.style.height = '400px'; cv.style.width = '640px';
+}
+async function toggleMode() {
+  const target = document.getElementById('mode-sel').value;
+  try {
+    const r = await fetch('/setmode?m=' + target + '&t=' + Date.now());
+    if (r.ok) { currentClientMode = target; updateModeUI(); }
+  } catch(e) { console.log('setmode error:', e); }
+}
+function updateModeUI() {
+  document.getElementById('mode-sel').value = currentClientMode;
+  isHires = currentClientMode.startsWith('hr_');
+  isFLI = currentClientMode.includes('_fli');
+  isGrayFLI = currentClientMode === 'mc_gray_fli';
+  isIFLI = currentClientMode === 'mc_gray_ifli';
+  resizeCanvas(isHires);
+}
+function updateContrastText() { document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1); }
+function updateBrightnessText() { document.getElementById('bval').innerText = document.getElementById('brightness').value; }
+async function sendContrast() { try { await fetch('/setcontrast?c=' + document.getElementById('contrast').value); } catch(e) {} }
+async function sendBrightness() { try { await fetch('/setbrightness?b=' + document.getElementById('brightness').value); } catch(e) {} }
+async function sendBg() { try { await fetch('/setbg?c=' + document.getElementById('bgcolor').value); } catch(e) {} }
+async function sendScale() { try { await fetch('/setscale?s=' + document.getElementById('scale').value); } catch(e) {} }
+async function sendScaling() { try { await fetch('/setscaling?s=' + document.getElementById('scaling').value); } catch(e) {} }
+function updateDitherText() { document.getElementById('dval').innerText = document.getElementById('dither').value; }
+async function sendDither() { try { await fetch('/setdither?d=' + document.getElementById('dither').value); } catch(e) {} }
+async function sendDitherType() { try { await fetch('/setdithertype?t=' + document.getElementById('ditherType').value); } catch(e) {} }
+
+async function save(t) {
+  const r = await fetch('/data?t=' + Date.now()); const bmp = new Uint8Array(await r.arrayBuffer());
+  let f;
+  if (t === 'KOA') {
+    f = new Uint8Array(10003); f[0] = 0; f[1] = 0x60; f.set(bmp.subarray(0, 8000), 2);
+    for (let i = 0; i < 1000; i++) { f[8002 + i] = bmp[8000 + i]; f[9002 + i] = bmp[9000 + i]; }
+    f[10002] = currentBgColor; download(f, 'img.koa'); return;
+  }
+  if (isIFLI) {
+    f = new Uint8Array(49155); f[0] = 1; f[1] = 8; f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+    const asm = [0x78,0xA9,0x34,0x85,0x01,0xA9,0x00,0x85,0xFC,0x85,0xFE,0xA9,0x80,0x85,0xFD,0xA9,0xC0,0x85,0xFF,0xA2,0x40,0xA0,0x00,0xB1,0xFC,0x91,0xFE,0xC8,0xD0,0xF9,0xE6,0xFD,0xE6,0xFF,0xCA,0xD0,0xF2,0xA9,0x35,0x85,0x01,0xA2,0x00,0x8A,0x29,0x07,0x09,0x38,0x9D,0x00,0x09,0x8A,0x29,0x07,0x0A,0x0A,0x0A,0x0A,0x09,0x08,0x9D,0x00,0x0A,0xE8,0xE0,0xC8,0xD0,0xE7,0xA2,0x00,0xBD,0x00,0x10,0x9D,0x00,0xD8,0xBD,0xFA,0x10,0x9D,0xFA,0xD8,0xBD,0xF4,0x11,0x9D,0xF4,0xD9,0xBD,0xEE,0x12,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,0xD0,0xE3,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,0xD8,0x8D,0x16,0xD0,0xA9,currentBgColor,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA9,0x08,0x8D,0x18,0xD0,0xA9,0x02,0x85,0x02,0xAD,0x12,0xD0,0xC9,0xF8,0xD0,0xF9,0xA5,0x02,0x49,0x02,0x85,0x02,0x8D,0x00,0xDD,0xAD,0x11,0xD0,0x30,0xFB,0xAD,0x12,0xD0,0xC9,0x2F,0xD0,0xF9,0xA2,0x08,0xCA,0xD0,0xFD,0xEA,0xA0,0x00,0xB9,0x00,0x09,0x8D,0x11,0xD0,0xB9,0x00,0x0A,0x8D,0x18,0xD0,0xC8,0xC0,0xC8,0xD0,0xEF,0x4C,0x89,0x08];
+    f.set(asm, 14); const o = a => a - 2049 + 2;
+    for(let i=0; i<1000; i++) f[o(0x1000)+i] = bmp[16000+i];
+    for(let i=0; i<8192; i++) {
+        f[o(0x4000)+i] = bmp[8000+i]; f[o(0x6000)+i] = i < 8000 ? bmp[i] : 0;
+        f[o(0x8000)+i] = bmp[17000+8000+i]; f[o(0xA000)+i] = i < 8000 ? bmp[17000+i] : 0;
+    }
+  } else if (isFLI) {
+    f = new Uint8Array(30721); f[0] = 1; f[1] = 8; f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+    const asm = [0x78,0xA2,0x00,0x8A,0x29,0x07,0x09,0x38,0x9D,0x00,0x09,0x8A,0x29,0x07,0x0A,0x0A,0x0A,0x0A,0x09,0x08,0x9D,0x00,0x0A,0xE8,0xE0,0xC8,0xD0,0xE7,0xA2,0x00,0xBD,0x00,0x10,0x9D,0x00,0xD8,0xBD,0xFA,0x10,0x9D,0xFA,0xD8,0xBD,0xF4,0x11,0x9D,0xF4,0xD9,0xBD,0xEE,0x12,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,0xD0,0xE3,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,0xD8,0x8D,0x16,0xD0,0xA9,currentBgColor,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA9,0x08,0x8D,0x18,0xD0,0xA9,0x02,0x8D,0x00,0xDD,0xAD,0x12,0xD0,0xC9,0xF8,0xD0,0xF9,0xAD,0x11,0xD0,0x30,0xFB,0xAD,0x12,0xD0,0xC9,0x2F,0xD0,0xF9,0xA2,0x08,0xCA,0xD0,0xFD,0xEA,0xA0,0x00,0xB9,0x00,0x09,0x8D,0x11,0xD0,0xB9,0x00,0x0A,0x8D,0x18,0xD0,0xC8,0xC0,0xC8,0xD0,0xEF,0x4C,0x69,0x08];
+    f.set(asm, 14); for(let i=0; i<8192; i++) f[14337+i] = bmp[8000+i];
+    for(let i=0; i<8000; i++) f[22529+i] = bmp[i]; for(let i=0; i<1000; i++) f[2049+i] = bmp[16000+i];
+  } else {
+    f = new Uint8Array(14145); f[0] = 1; f[1] = 8; f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+    const asm = [0x78,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,(isHires?0xC8:0xD8),0x8D,0x16,0xD0,0xA9,0x18,0x8D,0x18,0xD0,0xA9,currentBgColor,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA2,0x00,0xBD,0x70,0x08,0x9D,0x00,0x04,0xBD,0x6A,0x09,0x9D,0xFA,0x04,0xBD,0x64,0x0A,0x9D,0xF4,0x05,0xBD,0x5E,0x0B,0x9D,0xEE,0x06,0xE8,0xE0,0xFA,0xD0,0xE3,0xA2,0x00,0xBD,0x58,0x0C,0x9D,0x00,0xD8,0xBD,0x52,0x0D,0x9D,0xFA,0xD8,0xBD,0x4C,0x0E,0x9D,0xF4,0xD9,0xBD,0x46,0x0F,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,0xD0,0xE3,0x4C,0x63,0x08];
+    f.set(asm, 14); for(let i=0; i<1000; i++) f[113+i]=bmp[8000+i];
+    for(let i=0; i<1000; i++) f[1113+i]=bmp[9000+i]; f.set(bmp.subarray(0,8000), 6145);
+  }
+
+  if (t === 'PRG') { download(f, isIFLI ? 'ifli.prg' : (isFLI ? 'fli.prg' : (isHires ? 'hires.prg' : 'v.prg'))); }
+  else {
+    const payload = f.subarray(2); const nBanks = Math.ceil(payload.length / 8192);
+    const crt = []; const h = new Uint8Array(64);
+    h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20]);
+    h[0x13] = 0x40; h[0x15] = 0x01; h[0x17] = 0x20; 
+    h.set(new TextEncoder().encode("ESPSTREAMER").subarray(0,32), 0x20);
+    crt.push(h);
+    const createChip = (bank, data) => {
+      const c = new Uint8Array(16 + 8192); c.set([0x43,0x48,0x49,0x50]);
+      const l = 16+8192; c[4]=(l>>24); c[5]=(l>>16); c[6]=(l>>8); c[7]=l;
+      c[11]=bank; c[12]=0x80; c[14]=0x20; c.set(data, 16); return c;
+    };
+    const boot = new Uint8Array(8192);
+    const bootCode = [0x09,0x80,0x09,0x80,0xC3,0xC2,0xCD,0x38,0x30,0x78,0xD8,0xA2,0xFF,0x9A,0xA9,0x37,0x85,0x01,0xA9,0x01,0x85,0xFB,0xA9,0x08,0x85,0xFC,0xA9,0x01,0x85,0xFD,0xA5,0xFD,0x8D,0x00,0xDE,0xA2,0x20,0xA0,0x00,0xB9,0x00,0x80,0x91,0xFB,0xC8,0xD0,0xF9,0xE6,0xFC,0xCA,0xD0,0xF2,0xE6,0xFD,0xA5,0xFD,0xC9,(nBanks+1),0xD0,0xE4,0xA9,0x04,0x8D,0x02,0xDE,0x4C,0x0D,0x08];
+    boot.set(bootCode, 0); crt.push(createChip(0, boot));
+    for (let b=0; b < nBanks; b++) {
+      const chunk = new Uint8Array(8192); chunk.set(payload.subarray(b * 8192, (b + 1) * 8192));
+      crt.push(createChip(b + 1, chunk));
+    }
+    const finalSize = crt.reduce((a, b) => a + b.length, 0);
+    const combined = new Uint8Array(finalSize);
+    let offset = 0;
+    for (const chunk of crt) { combined.set(chunk, offset); offset += chunk.length; }
+    download(combined, 'stream.crt');
+  }
+}
+function download(d, n) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d]));
+  a.download = n; a.click();
+}
+async function upd() {
+  try {
+    const srPromise = fetch('/stats?t=' + Date.now()); const rPromise = fetch('/data?t=' + Date.now());
+    const [sr, r] = await Promise.all([srPromise, rPromise]);
+    if (sr.ok) {
+      const s = await sr.json(); if (s.mode && s.mode !== currentClientMode) { currentClientMode = s.mode; updateModeUI(); }
+      if (s.contrast !== undefined && document.activeElement !== document.getElementById('contrast')) { document.getElementById('contrast').value = s.contrast; updateContrastText(); }
+      if (s.brightness !== undefined && document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
+      if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) document.getElementById('scale').value = s.scale;
+      if (s.scaling !== undefined && document.activeElement !== document.getElementById('scaling')) document.getElementById('scaling').value = s.scaling;
+      if (s.bg !== undefined && document.activeElement !== document.getElementById('bgcolor')) { currentBgColor = s.bg; document.getElementById('bgcolor').value = s.bg; }
+      if (s.dither !== undefined && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
+      if (s.ditherType !== undefined && document.activeElement !== document.getElementById('ditherType')) document.getElementById('ditherType').value = s.ditherType;
+
+      const now = Date.now();
+      if (lastStatsTime > 0) {
+        const dt = (now - lastStatsTime) / 1000.0;
+        if (dt >= 1.0) { currentFPS = ((s.frames - lastFrames) / dt).toFixed(1); currentKBs = ((s.totalKB - lastKB) / dt).toFixed(1); lastStatsTime = now; lastFrames = s.frames; lastKB = s.totalKB; }
+      } else { lastStatsTime = now; lastFrames = s.frames; lastKB = s.totalKB; }
+      const dot = document.getElementById('dot'); const stxt = document.getElementById('stxt');
+      dot.className = s.connected ? 'dot on' : 'dot';
+      stxt.innerHTML = 'Status: ' + (s.connected ? '<span class="val">LIVE</span>' : '<span class="err">DISCONNECTED</span>') + ' &nbsp;|&nbsp; FPS: <span class="val">' + Math.max(0, currentFPS) + '</span> &nbsp;|&nbsp; <span class="val">' + Math.max(0, currentKBs) + '</span> KB/s &nbsp;|&nbsp; Total: <span class="val">' + s.totalKB + '</span> KB';
+    }
+    if (!r.ok) return;
+    const d = new Uint8Array(await r.arrayBuffer()); const cv = document.getElementById('c'); const ctx = cv.getContext('2d');
+    if (isIFLI) {
+      const img = ctx.createImageData(160, 200); const bgCol = c64Pal[d[34000]];
+      for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8), py = by % 8, screenBank = py * 1024;
+        for (let bx = 0; bx < 40; bx++) {
+          let cellIdx = charRow * 40 + bx, byteA = d[cellIdx * 8 + py], sByA = d[8000 + screenBank + cellIdx], cByA = d[16000 + cellIdx];
+          let colsA = [ bgCol, c64Pal[sByA >> 4], c64Pal[sByA & 0x0F], c64Pal[cByA & 0x0F] ];
+          let cellB = cellIdx + 17000, offB = 17000, byteB2 = d[offB + cellIdx * 8 + py], sByB = d[offB + 8000 + screenBank + cellIdx], cByB = d[offB + 16000 + cellIdx];
+          let colsB = [ bgCol, c64Pal[sByB >> 4], c64Pal[sByB & 0x0F], c64Pal[cByB & 0x0F] ];
+          for (let px = 0; px < 4; px++) {
+            let colA = colsA[(byteA >> ((3 - px) * 2)) & 3] || [0,0,0], colB = colsB[(byteB2 >> ((3 - px) * 2)) & 3] || [0,0,0], outIdx = (by * 160 + bx * 4 + px) * 4;
+            img.data[outIdx] = (colA[0] + colB[0]) >> 1; img.data[outIdx+1] = (colA[1] + colB[1]) >> 1; img.data[outIdx+2] = (colA[2] + colB[2]) >> 1; img.data[outIdx+3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0); ctx.fillStyle = "rgba(200, 200, 200, 0.9)"; ctx.font = "bold 8px monospace"; ctx.fillText("IFLI GRAY", 110, 10);
+    } else if (isFLI) {
+      const img = ctx.createImageData(160, 200); const bgCol = c64Pal[d[17000]];
+      for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8), py = by % 8, screenBank = py * 1024;
+        for (let bx = 0; bx < 40; bx++) {
+          let cellIdx = charRow * 40 + bx, byte = d[cellIdx * 8 + py], screenByte = d[8000 + screenBank + cellIdx], colorByte = d[16000 + cellIdx];
+          let cols = [ bgCol, c64Pal[screenByte >> 4], c64Pal[screenByte & 0x0F], c64Pal[colorByte & 0x0F] ];
+          for (let px = 0; px < 4; px++) {
+            let col = cols[(byte >> ((3 - px) * 2)) & 3] || [0,0,0], outIdx = (by * 160 + bx * 4 + px) * 4;
+            img.data[outIdx] = col[0]; img.data[outIdx+1] = col[1]; img.data[outIdx+2] = col[2]; img.data[outIdx+3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0); ctx.fillStyle = isGrayFLI ? "rgba(200, 200, 200, 0.9)" : "rgba(0, 255, 180, 0.7)"; ctx.font = "bold 8px monospace"; 
+      ctx.fillText(isGrayFLI ? "GRAY FLI" : "FLI", isGrayFLI ? 120 : 145, 10);
+    } else if (isHires) {
+      const img = ctx.createImageData(320, 200);
+      for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8), py = by % 8;
+        for (let bx = 0; bx < 40; bx++) {
+          let cellIdx = charRow * 40 + bx; const byte = d[cellIdx * 8 + py];
+          let screenByte = d[8000 + cellIdx], fgCol = c64Pal[screenByte >> 4], bgCol = c64Pal[screenByte & 0x0F];
+          for (let bit = 7; bit >= 0; bit--) {
+            const px = bx * 8 + (7 - bit); const isFg = (byte >> bit) & 1; const c = isFg ? fgCol : bgCol; const idx = (by * 320 + px) * 4;
+            img.data[idx] = c[0]; img.data[idx+1] = c[1]; img.data[idx+2] = c[2]; img.data[idx+3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    } else {
+      const img = ctx.createImageData(160, 200); let bgCol = c64Pal[currentBgColor];
+      for (let by = 0; by < 200; by++) {
+        let charRow = Math.floor(by / 8), py = by % 8;
+        for (let bx = 0; bx < 40; bx++) {
+          let cellIdx = charRow * 40 + bx, byte = d[cellIdx * 8 + py], screenByte = d[8000 + cellIdx], colorByte = d[16000 + cellIdx];
+          let cols = [ bgCol, c64Pal[screenByte >> 4], c64Pal[screenByte & 0x0F], c64Pal[colorByte & 0x0F] ];
+          for (let px = 0; px < 4; px++) {
+            let col = cols[(byte >> ((3 - px) * 2)) & 3], outIdx = (by * 160 + bx * 4 + px) * 4;
+            img.data[outIdx] = col[0]; img.data[outIdx+1] = col[1]; img.data[outIdx+2] = col[2]; img.data[outIdx+3] = 255;
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+  } catch(e) { console.log('Fetch error:', e); }
+  if (running) setTimeout(upd, 70);
+}
+upd();
+</script>
+</body></html>
+)rawhtml";
+
+//WebServer server(80);
+
 // --- Mode ---
 enum StreamMode { M_MC_GRAY, M_HR_GRAY, M_MC_COLOR, M_HR_COLOR, M_MC_FLI, M_MC_GRAY_FLI, M_MC_GRAY_IFLI };
 StreamMode currentMode = M_MC_COLOR;
@@ -807,6 +1202,11 @@ void handleStats() {
 }
 
 void handleRoot() {
+  server.send_P(200, "text/html", INDEX_HTML);
+}
+
+/*
+void old_handleRoot_to_delete() {
   String html = R"rawhtml(
 <!DOCTYPE html>
 <html><head>
@@ -960,6 +1360,7 @@ void handleRoot() {
     </select>
     <button onclick="save('PRG')">&#x25B6; PRG</button>
     <button onclick="save('KOA')">&#x25B6; KOA</button>
+    <button onclick="save('CRT')">&#x25B6; CRT</button>
   </div>
   <div class="slider-container">
     <span>CT: <span id="cval" class="val">1.0</span></span>
@@ -1271,6 +1672,124 @@ async function save(t) {
     // Bitmap data always at $2000 (offset 6145 from file start)
     f.set(bmp.subarray(0, 8000), 6145);
     download(f, isHires ? 'hires.prg' : 'v.prg');
+  } else if (t === 'CRT') {
+    // 1. Build PRG Payload first (stripped of metadata)
+    let prg;
+    if (isIFLI) {
+      prg = new Uint8Array(49155);
+      prg[0] = 1; prg[1] = 8;
+      prg.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+      const ifliAsm = [
+        0x78,0xA9,0x34,0x85,0x01,0xA9,0x00,0x85,0xFC,0x85,0xFE,0xA9,0x80,0x85,0xFD,0xA9,0xC0,0x85,0xFF,
+        0xA2,0x40,0xA0,0x00,0xB1,0xFC,0x91,0xFE,0xC8,0xD0,0xF9,0xE6,0xFD,0xE6,0xFF,0xCA,0xD0,0xF2,
+        0xA9,0x35,0x85,0x01,0xA2,0x00,0x8A,0x29,0x07,0x09,0x38,0x9D,0x00,0x09,0x8A,0x29,0x07,0x0A,0x0A,
+        0x0A,0x0A,0x09,0x08,0x9D,0x00,0x0A,0xE8,0xE0,0xC8,0xD0,0xE7,0xA2,0x00,0xBD,0x00,0x10,0x9D,0x00,
+        0xD8,0xBD,0xFA,0x10,0x9D,0xFA,0xD8,0xBD,0xF4,0x11,0x9D,0xF4,0xD9,0xBD,0xEE,0x12,0x9D,0xEE,0xDA,
+        0xE8,0xE0,0xFA,0xD0,0xE3,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,0xD8,0x8D,0x16,0xD0,0xA9,currentBgColor,
+        0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA9,0x08,0x8D,0x18,0xD0,0xA9,0x02,0x85,0x02,0xAD,0x12,0xD0,0xC9,
+        0xF8,0xD0,0xF9,0xA5,0x02,0x49,0x02,0x85,0x02,0x8D,0x00,0xDD,0xAD,0x11,0xD0,0x30,0xFB,0xAD,0x12,
+        0xD0,0xC9,0x2F,0xD0,0xF9,0xA2,0x08,0xCA,0xD0,0xFD,0xEA,0xA0,0x00,0xB9,0x00,0x09,0x8D,0x11,0xD0,
+        0xB9,0x00,0x0A,0x8D,0x18,0xD0,0xC8,0xC0,0xC8,0xD0,0xEF,0x4C,0x89,0x08
+      ];
+      prg.set(ifliAsm, 14);
+      const off = a => a - 0x0801 + 2;
+      for(let i=0; i<1000; i++) prg[off(0x1000)+i] = bmp[16000+i];
+      for(let i=0; i<8192; i++) {
+        prg[off(0x4000)+i] = bmp[8000+i]; prg[off(0x6000)+i] = i < 8000 ? bmp[i] : 0;
+        prg[off(0x8000)+i] = bmp[17000+8000+i]; prg[off(0xA000)+i] = i < 8000 ? bmp[17000+i] : 0;
+      }
+    } else if (isFLI) {
+      prg = new Uint8Array(30721);
+      prg[0] = 1; prg[1] = 8;
+      prg.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+      const fliAsm = [
+        0x78,0xA2,0x00,0x8A,0x29,0x07,0x09,0x38,0x9D,0x00,0x09,0x8A,0x29,0x07,0x0A,0x0A,0x0A,0x0A,0x09,
+        0x08,0x9D,0x00,0x0A,0xE8,0xE0,0xC8,0xD0,0xE7,0xA2,0x00,0xBD,0x00,0x10,0x9D,0x00,0xD8,0xBD,0xFA,
+        0x10,0x9D,0xFA,0xD8,0xBD,0xF4,0x11,0x9D,0xF4,0xD9,0xBD,0xEE,0x12,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,
+        0xD0,0xE3,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,0xD8,0x8D,0x16,0xD0,0xA9,currentBgColor,0x8D,0x20,0xD0,
+        0x8D,0x21,0xD0,0xA9,0x08,0x8D,0x18,0xD0,0xA9,0x02,0x8D,0x00,0xDD,0xAD,0x12,0xD0,0xC9,0xF8,0xD0,
+        0xF9,0xAD,0x11,0xD0,0x30,0xFB,0xAD,0x12,0xD0,0xC9,0x2F,0xD0,0xF9,0xA2,0x08,0xCA,0xD0,0xFD,0xEA,
+        0xA0,0x00,0xB9,0x00,0x09,0x8D,0x11,0xD0,0xB9,0x00,0x0A,0x8D,0x18,0xD0,0xC8,0xC0,0xC8,0xD0,0xEF,
+        0x4C,0x69,0x08
+      ];
+      prg.set(fliAsm, 14);
+      for(let i=0; i<8192; i++) prg[14337+i] = bmp[8000+i];
+      for(let i=0; i<8000; i++) prg[22529+i] = bmp[i];
+      for(let i=0; i<1000; i++) prg[2049+i] = bmp[16000+i];
+    } else {
+      prg = new Uint8Array(14145);
+      prg[0] = 1; prg[1] = 8;
+      prg.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+      const prgAsm = [
+        0x78,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,(isHires?0xC8:0xD8),0x8D,0x16,0xD0,0xA9,0x18,0x8D,0x18,0xD0,
+        0xA9,currentBgColor,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA2,0x00,0xBD,0x70,0x08,0x9D,0x00,0x04,0xBD,
+        0x6A,0x09,0x9D,0xFA,0x04,0xBD,0x64,0x0A,0x9D,0xF4,0x05,0xBD,0x5E,0x0B,0x9D,0xEE,0x06,0xE8,0xE0,
+        0xFA,0xD0,0xE3,0xA2,0x00,0xBD,0x58,0x0C,0x9D,0x00,0xD8,0xBD,0x52,0x0D,0x9D,0xFA,0xD8,0xBD,0x4C,
+        0x0E,0x9D,0xF4,0xD9,0xBD,0x46,0x0F,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,0xD0,0xE3,0x4C,0x63,0x08
+      ];
+      prg.set(prgAsm, 14);
+      for(let i=0;i<1000;i++) prg[113+i]=bmp[8000+i];
+      for(let i=0;i<1000;i++) prg[1113+i]=bmp[9000+i];
+      prg.set(bmp.subarray(0,8000), 6145);
+    }
+
+    // 2. Wrap into EasyFlash CRT
+    const payload = prg.subarray(2); // Strip $01, $08 header
+    const nBanks = Math.ceil(payload.length / 8192);
+    const crt = [];
+    
+    // Main Header (64 bytes)
+    const h = new Uint8Array(64);
+    h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20]); // Signature
+    h[0x13] = 0x40; // Length
+    h[0x15] = 0x01; // Version
+    h[0x17] = 0x20; // Type: 32 (EasyFlash)
+    h.set(new TextEncoder().encode("ESPSTREAMER").subarray(0,32), 0x20);
+    crt.push(h);
+
+    const createChip = (bank, data) => {
+      const c = new Uint8Array(16 + 8192);
+      c.set([0x43,0x48,0x49,0x50]);
+      const l = 16+8192;
+      c[4]=(l>>24); c[5]=(l>>16); c[6]=(l>>8); c[7]=l;
+      c[11]=bank; c[12]=0x80; c[14]=0x20;
+      c.set(data, 16);
+      return c;
+    };
+
+    // Bank 0: Bootstrap
+    const boot = new Uint8Array(8192);
+    const bootCode = [
+      0x09,0x80,0x09,0x80,0xC3,0xC2,0xCD,0x38,0x30, // Header
+      0x78,0xD8,0xA2,0xFF,0x9A,0xA9,0x37,0x85,0x01, // Init
+      0xA9,0x01,0x85,0xFB,0xA9,0x08,0x85,0xFC,       // Dest=$0801
+      0xA9,0x01,0x85,0xFD,                         // Bank=1
+      0xA5,0xFD,0x8D,0x00,0xDE,                    // [DE00] Switch
+      0xA2,0x20,0xA0,0x00,                         // 32 pages
+      0xB9,0x00,0x80,0x91,0xFB,0xC8,0xD0,0xF9,       // Copy loop
+      0xE6,0xFC,0xCA,0xD0,0xF2,                   // Next page
+      0xE6,0xFD,0xA5,0xFD,0xC9, (nBanks+1),        // Next bank, CMP limit
+      0xD0,0xE4,0xA9,0x04,0x8D,0x02,0xDE,          // Disable Cart
+      0x4C,0x0D,0x08                               // JMP $080D
+    ];
+    boot.set(bootCode, 0);
+    crt.push(createChip(0, boot));
+
+    // Banks 1..N: Payload
+    for (let b=0; b < nBanks; b++) {
+      const chunk = new Uint8Array(8192);
+      chunk.set(payload.subarray(b * 8192, (b + 1) * 8192));
+      crt.push(createChip(b + 1, chunk));
+    }
+
+    const finalSize = crt.reduce((a, b) => a + b.length, 0);
+    const combined = new Uint8Array(finalSize);
+    let offset = 0;
+    for (const chunk of crt) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+    download(combined, 'stream.crt');
   }
 }
 
@@ -1479,6 +1998,7 @@ upd();
 )rawhtml";
   server.send(200, "text/html", html);
 }
+*/
 
 // --- MJPEG Stream Functions ---
 
