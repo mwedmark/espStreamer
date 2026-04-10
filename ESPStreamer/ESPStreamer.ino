@@ -20,6 +20,7 @@ StreamMode currentMode = M_MC_COLOR;
 #define IS_COLOR (currentMode == M_MC_COLOR || currentMode == M_HR_COLOR || currentMode == M_MC_FLI || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
 #define IS_FLI   (currentMode == M_MC_FLI || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
 #define IS_IFLI  (currentMode == M_MC_GRAY_IFLI)
+#define IS_GRAY_MODE (currentMode == M_MC_GRAY || currentMode == M_HR_GRAY || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
 
 // --- Buffers ---
 uint8_t c64_buffer[68010];          // Two 34005 byte buffers (covers IFLI's 34K)
@@ -53,7 +54,8 @@ float imgBrightness = 0.0f;
 int16_t brightness_val = 0;
 uint8_t jpgScale = 1;
 uint8_t scalingMode = 0;   // 0=Stretch, 1=Fit (letterbox), 2=Crop (zoom)
-uint8_t ditherStrength = 4;  // Bayer dither intensity: 0=off, 1-8
+uint8_t ditherStrength = 4;  // Dither intensity: 0=off, 1-8
+uint8_t ditherAlgo = 2;      // 0=None, 1=Bayer4x4, 2=Bayer8x8, 3=WhiteNoise, 4=BlueNoise, 5=FloydSteinberg
 uint8_t globalBgColor = 0;   // User-selected background color
 uint16_t currentJpgWidth = 320;
 uint16_t currentJpgHeight = 200;
@@ -62,6 +64,14 @@ uint16_t currentJpgHeight = 200;
 const uint8_t c64_pal_r[16] = {0,255,136,170,204,0,  0,  238,221,102,255,51,119,170,0,  187};
 const uint8_t c64_pal_g[16] = {0,255,0,  255,68, 204,0,  238,136,68, 119,51,119,255,136,187};
 const uint8_t c64_pal_b[16] = {0,255,0,  238,204,85, 170,119,85, 0,  119,51,119,102,255,187};
+
+// Bayer 4x4 ordered dither matrix (centered, range -8..+7)
+const int8_t bayer4x4[4][4] = {
+    { -8,  8, -6, 10},
+    {  0, -4,  2, -2},
+    { -5, 11, -7,  9},
+    {  3, -1,  5, -3}
+};
 
 // Bayer 8x8 ordered dither matrix (centered, range -32..+31)
 const int8_t bayer8x8[8][8] = {
@@ -75,10 +85,83 @@ const int8_t bayer8x8[8][8] = {
     { 31, -1,  23, -9,  29, -3,  21,-11}
 };
 
+// Blue Noise 8x8 matrix (precomputed, centered, range -32..+31)
+const int8_t blueNoise8x8[8][8] = {
+    { -8, 23,-18, 12,-31, 17, -4, 28},
+    { 19,-14,  5,-25, 20, -9, 14,-22},
+    { -3, 30,-21,  9,-16, 26, -7, 11},
+    { 24,-11, 16,-28,  3,-20, 21,-13},
+    {-27,  7,-19, 22, -6, 29,-24,  0},
+    { 13,-30,  1,-15, 18,-12, 10,-17},
+    {-23, 27, -5, 25,-29,  6,-26, 15},
+    {  8,-10, 31, -2, 11,-32,  4,-8}
+};
+
+// Simple LFSR state for white-noise dithering
+static uint32_t lfsrState = 0xDEADBEEF;
+inline int8_t nextWhiteNoise() {
+  lfsrState ^= lfsrState << 13;
+  lfsrState ^= lfsrState >> 17;
+  lfsrState ^= lfsrState << 5;
+  // Map to -32..+31
+  return (int8_t)((lfsrState & 0x3F) - 32);
+}
+
+// Unified dither offset helper: returns the raw matrix/noise value (-32..+31 range)
+// Caller multiplies by ditherStrength and divides as needed.
+inline int8_t getDitherOffset(int tx, int ty) {
+  switch (ditherAlgo) {
+    case 1: return bayer4x4[ty & 3][tx & 3];
+    case 2: return bayer8x8[ty & 7][tx & 7];
+    case 3: return nextWhiteNoise();
+    case 4: return blueNoise8x8[ty & 7][tx & 7];
+    default: return 0;
+  }
+}
+
 inline uint32_t manhattanDist(uint8_t c1, uint8_t c2) {
   return (abs(c64_pal_r[c1] - c64_pal_r[c2]) * 2) + 
          (abs(c64_pal_g[c1] - c64_pal_g[c2]) * 4) + 
          (abs(c64_pal_b[c1] - c64_pal_b[c2]));
+}
+
+// Error buffers for Floyd-Steinberg (3 channels, 320 pixels wide + padding)
+int16_t fs_err_buf[3][322];
+
+inline uint8_t find_best_c64_match_rgb(int r, int g, int b, int& outR, int& outG, int& outB) {
+  uint32_t best_dist = 0xFFFFFFFF;
+  uint8_t best_col = 0;
+  for (int i=0; i<16; i++) {
+    uint32_t dist = (abs(r - c64_pal_r[i]) * 2) + 
+                    (abs(g - c64_pal_g[i]) * 4) + 
+                    (abs(b - c64_pal_b[i]));
+    if (dist < best_dist) {
+      best_dist = dist;
+      best_col = (uint8_t)i;
+    }
+  }
+  outR = c64_pal_r[best_col];
+  outG = c64_pal_g[best_col];
+  outB = c64_pal_b[best_col];
+  return best_col;
+}
+
+// Fixed grayscale palette indices: 0(Blk), 11(D.Gry), 12(M.Gry), 15(L.Gry), 1(Wht)
+const uint8_t c64_greys[5] = {0, 11, 12, 15, 1};
+
+inline uint8_t find_best_gray_c64(int luma, int& outLuma) {
+  int best_dist = 1000;
+  uint8_t best_col = 0;
+  for (int i=0; i<5; i++) {
+    int g = (c64_pal_r[c64_greys[i]] * 77 + c64_pal_g[c64_greys[i]] * 153 + c64_pal_b[c64_greys[i]] * 26) >> 8;
+    int dist = abs(luma - g);
+    if (dist < best_dist) {
+      best_dist = dist;
+      best_col = c64_greys[i];
+      outLuma = g;
+    }
+  }
+  return best_col;
 }
 
 inline uint8_t rgb565_to_c64(uint16_t p) {
@@ -124,8 +207,8 @@ inline uint8_t rgb565_to_dithered_gray(uint16_t p, int tx, int ty) {
   }
   
   int16_t luma = (r * 77 + g * 153 + b * 26) >> 8;
-  if (ditherStrength > 0) {
-    luma += (bayer8x8[ty & 7][tx & 7] * ditherStrength) / 4;
+  if (ditherStrength > 0 && ditherAlgo > 0) {
+    luma += (getDitherOffset(tx, ty) * ditherStrength) / 4;
     if (luma < 0) luma = 0;
     if (luma > 255) luma = 255;
   }
@@ -153,8 +236,8 @@ inline uint8_t rgb565_to_ifli_gray(uint16_t p, int tx, int ty) {
   }
   
   int16_t luma = (r * 77 + g * 153 + b * 26) >> 8;
-  if (ditherStrength > 0) {
-    luma += (bayer8x8[ty & 7][tx & 7] * ditherStrength) / 4;
+  if (ditherStrength > 0 && ditherAlgo > 0) {
+    luma += (getDitherOffset(tx, ty) * ditherStrength) / 4;
     if (luma < 0) luma = 0;
     if (luma > 255) luma = 255;
   }
@@ -246,8 +329,8 @@ void packC64Frame() {
                 }
               }
               uint8_t bits = slots[0];
-              if (ditherStrength > 0) {
-                int32_t bayer = (int32_t)bayer8x8[py & 7][(cx*4 + px) & 7] * ditherStrength;
+              if (ditherStrength > 0 && ditherAlgo > 0) {
+                int32_t bayer = (int32_t)getDitherOffset(cx*4 + px, py) * ditherStrength;
                 if ((int32_t)dists[1] - bayer < (int32_t)dists[0] + bayer) bits = slots[1];
               }
               byte |= (bits << ((3 - px) * 2));
@@ -277,7 +360,7 @@ void packC64Frame() {
             uint8_t c = get_col((cy*8 + py)*320 + (cx*8 + px));
             int32_t dbg = (int32_t)manhattanDist(c, bg);
             int32_t dfg = (int32_t)manhattanDist(c, fg);
-            int32_t bayer = (ditherStrength > 0) ? (int32_t)bayer8x8[py & 7][px & 7] * ditherStrength : 0;
+            int32_t bayer = (ditherStrength > 0 && ditherAlgo > 0) ? (int32_t)getDitherOffset(px, py) * ditherStrength : 0;
             
             if (dfg - bayer < dbg + bayer) byte |= (1 << (7 - px));
           }
@@ -329,12 +412,10 @@ void packC64Frame() {
             }
             
             uint8_t bits;
-            if (ditherStrength > 0) {
-              // Bayer 8x8: dither between nearest and second-nearest palette color
-              int gx = (cx * 4 + px) & 7;
-              int gy = (cy * 8 + py) & 7;
-              int32_t bayerVal = (int32_t)bayer8x8[gy][gx] * ditherStrength;
-              bits = (dists[1] - bayerVal < dists[0] + bayerVal) ? slots[1] : slots[0];
+            if (ditherStrength > 0 && ditherAlgo > 0) {
+              // Ordered dither: compare nearest and second-nearest palette color
+              int32_t ditherVal = (int32_t)getDitherOffset(cx*4 + px, cy*8 + py) * ditherStrength;
+              bits = (dists[1] - ditherVal < dists[0] + ditherVal) ? slots[1] : slots[0];
             } else {
               bits = slots[0];
             }
@@ -371,7 +452,7 @@ inline int16_t get_gray(uint16_t p) {
 
 inline void drawHiResPixel(int x, int y, int16_t gray) {
   if (x >= 320 || y >= 200) return;
-  int16_t dithered = (ditherStrength > 0) ? gray + bayer8x8[y & 7][x & 7] : gray;
+  int16_t dithered = (ditherStrength > 0 && ditherAlgo > 0) ? gray + getDitherOffset(x, y) : gray;
   if (dithered >= 128) {
     int cellIdx = (y / 8) * 40 + (x / 8);
     int py = (y % 8);
@@ -382,7 +463,7 @@ inline void drawHiResPixel(int x, int y, int16_t gray) {
 
 inline void drawMultiColorPixel(int x, int y, int16_t gray) {
   if (x >= 160 || y >= 200) return;
-  int16_t dithered = (ditherStrength > 0) ? gray + bayer8x8[y & 7][x & 7] : gray;
+  int16_t dithered = (ditherStrength > 0 && ditherAlgo > 0) ? gray + getDitherOffset(x, y) : gray;
   if (dithered < 0) dithered = 0;
   if (dithered > 255) dithered = 255;
   uint8_t level = dithered >> 6;
@@ -393,6 +474,9 @@ inline void drawMultiColorPixel(int x, int y, int16_t gray) {
     render_buffer[cellIdx * 8 + py] |= (level << bitPos);
   }
 }
+
+// --- Processing variables for Floyd-Steinberg vertical state ---
+static int16_t fs_h_err[3]; // Horizontal error within currently processed scanline segment
 
 // TJpg_Decoder callback
 bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap) {
@@ -406,6 +490,9 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
     int endY   = mapY_end[currY];
     if (startY == endY) continue; 
 
+    // Reset horizontal error at the start of each MCU row (x=0) or segment start
+    fs_h_err[0] = fs_h_err[1] = fs_h_err[2] = 0;
+
     for (int i = 0; i < w; i++) {
       int currX = x + i;
       if (currX >= currentJpgWidth || currX >= 1280) continue;
@@ -414,30 +501,141 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
       int endX   = mapX_end[currX];
       if (startX == endX) continue; 
 
+      uint16_t pix = bitmap[i + j * w];
+      int sr = (pix >> 8) & 0xF8;
+      int sg = (pix >> 3) & 0xFC;
+      int sb = (pix << 3) & 0xF8;
+      
+      if (contrast_fp != 256 || brightness_val != 0) {
+        sr = (int)((((sr - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+        sg = (int)((((sg - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+        sb = (int)((((sb - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+        if(sr<0) sr=0; if(sr>255) sr=255;
+        if(sg<0) sg=0; if(sg>255) sg=255;
+        if(sb<0) sb=0; if(sb>255) sb=255;
+      }
+      
+      // If we are in a grayscale mode, force source to monochromatic to avoid color error bleed
+      if (IS_GRAY_MODE) {
+        sr = sg = sb = (sr * 77 + sg * 153 + sb * 26) >> 8;
+      }
+
       if (IS_COLOR) {
         int wTarget = IS_HIRES ? 320 : 160;
-        uint8_t c64col_std = 0;
-        if (currentMode != M_MC_GRAY_FLI && currentMode != M_MC_GRAY_IFLI) c64col_std = rgb565_to_c64(bitmap[i + j * w]);
         
         for (int ty = startY; ty < endY; ty++) {
           for (int tx = startX; tx < endX; tx++) {
             if (ty < 200 && tx < wTarget) {
-              if (currentMode == M_MC_GRAY_FLI) {
-                color_buffer[ty * wTarget + tx] = rgb565_to_dithered_gray(bitmap[i + j * w], tx, ty);
-              } else if (currentMode == M_MC_GRAY_IFLI) {
-                color_buffer[ty * wTarget + tx] = rgb565_to_ifli_gray(bitmap[i + j * w], tx, ty);
+              uint8_t final_col = 0;
+
+              if (ditherAlgo == 5) { // Floyd-Steinberg
+                // Target with accumulated error
+                int tr = sr + fs_h_err[0] + fs_err_buf[0][tx + 1];
+                int tg = sg + fs_h_err[1] + fs_err_buf[1][tx + 1];
+                int tb = sb + fs_h_err[2] + fs_err_buf[2][tx + 1];
+                
+                int ar, ag, ab;
+                if (currentMode == M_MC_GRAY_IFLI) {
+                  // IFLI Gray has 9 levels (interlaced)
+                  const int ifli_lumas[9] = {0, 24, 48, 77, 107, 137, 168, 211, 255};
+                  const uint8_t ifli_pair_h[9] = {0,  0, 11, 11, 12, 12, 15, 15, 1};
+                  const uint8_t ifli_pair_l[9] = {0, 11, 11, 12, 12, 15, 15,  1, 1};
+                  
+                  int best_d = 1000; int best_idx = 0;
+                  for(int k=0; k<9; k++) {
+                    int d = abs(tr - ifli_lumas[k]);
+                    if(d < best_d) { best_d = d; best_idx = k; }
+                  }
+                  final_col = (ifli_pair_h[best_idx] << 4) | (ifli_pair_l[best_idx] & 0x0F);
+                  ar = ag = ab = ifli_lumas[best_idx];
+                } else if (currentMode == M_MC_GRAY_FLI) {
+                  final_col = find_best_gray_c64(tr, ar);
+                  ag = ab = ar;
+                } else {
+                  final_col = find_best_c64_match_rgb(tr, tg, tb, ar, ag, ab);
+                }
+                
+                // Calculate and distribute error
+                int er = (tr - ar) * ditherStrength / 8;
+                int eg = (tg - ag) * ditherStrength / 8;
+                int eb = (tb - ab) * ditherStrength / 8;
+                
+                // Floyd-Steinberg Kernel:
+                // [ *   7 ] / 16
+                // [ 3 5 1 ] / 16
+                fs_h_err[0] = (er * 7) >> 4;
+                fs_h_err[1] = (eg * 7) >> 4;
+                fs_h_err[2] = (eb * 7) >> 4;
+                
+                fs_err_buf[0][tx]   += (er * 3) >> 4;
+                fs_err_buf[1][tx]   += (eg * 3) >> 4;
+                fs_err_buf[2][tx]   += (eb * 3) >> 4;
+                
+                fs_err_buf[0][tx+1] = (er * 5) >> 4; // We reset tx+1 since it was used
+                fs_err_buf[1][tx+1] = (eg * 5) >> 4;
+                fs_err_buf[2][tx+1] = (eb * 5) >> 4;
+                
+                fs_err_buf[0][tx+2] += er >> 4;
+                fs_err_buf[1][tx+2] += eg >> 4;
+                fs_err_buf[2][tx+2] += eb >> 4;
+                
+                color_buffer[ty * wTarget + tx] = final_col;
               } else {
-                color_buffer[ty * wTarget + tx] = c64col_std;
+                if (currentMode == M_MC_GRAY_FLI) {
+                  color_buffer[ty * wTarget + tx] = rgb565_to_dithered_gray(pix, tx, ty);
+                } else if (currentMode == M_MC_GRAY_IFLI) {
+                  color_buffer[ty * wTarget + tx] = rgb565_to_ifli_gray(pix, tx, ty);
+                } else {
+                  color_buffer[ty * wTarget + tx] = rgb565_to_c64(pix);
+                }
               }
             }
           }
         }
       } else {
-        int16_t gray = get_gray(bitmap[i + j * w]);
+        int16_t grayVal = (sr * 77 + sg * 153 + sb * 26) >> 8;
+        
         for (int ty = startY; ty < endY; ty++) {
           for (int tx = startX; tx < endX; tx++) {
-            if (IS_HIRES) drawHiResPixel(tx, ty, gray);
-            else          drawMultiColorPixel(tx, ty, gray);
+            if (ty < 200 && (IS_HIRES ? tx < 320 : tx < 160)) {
+              if (ditherAlgo == 5) {
+                // Grayscale FS
+                int target = grayVal + fs_h_err[0] + fs_err_buf[0][tx + 1];
+                if (target < 0) target = 0; if (target > 255) target = 255;
+                
+                uint8_t quantized;
+                int actual;
+                
+                if (IS_HIRES) {
+                  // Hi-Res Grayscale: simple black/white (0/128 threshold)
+                  quantized = (target >= 128) ? 1 : 0; // index for draw logic (not palette index)
+                  actual = quantized ? 255 : 0;
+                  
+                  int cellIdx = (ty / 8) * 40 + (tx / 8);
+                  int bitPos = 7 - (tx % 8);
+                  if (quantized) render_buffer[cellIdx * 8 + (ty % 8)] |= (1 << bitPos);
+                } else {
+                  // Multi-Color Grayscale: 4 levels (0, 85, 170, 255) mapped to 0..3
+                  int level = target >> 6; // 0, 1, 2, 3
+                  if (level > 3) level = 3;
+                  actual = level * 85;
+                  
+                  int cellIdx = (ty / 8) * 40 + (tx / 4);
+                  int bitPos = (3 - (tx % 4)) * 2;
+                  if (level) render_buffer[cellIdx * 8 + (ty % 8)] |= (level << bitPos);
+                }
+                
+                int err = (target - actual) * ditherStrength / 8;
+                fs_h_err[0] = (err * 7) >> 4;
+                fs_err_buf[0][tx]   += (err * 3) >> 4;
+                fs_err_buf[0][tx+1] = (err * 5) >> 4;
+                fs_err_buf[0][tx+2] += err >> 4;
+              } else {
+                // Legacy Bayer/Noise
+                if (IS_HIRES) drawHiResPixel(tx, ty, grayVal);
+                else          drawMultiColorPixel(tx, ty, grayVal);
+              }
+            }
           }
         }
       }
@@ -526,6 +724,21 @@ void handleSetDither() {
   }
 }
 
+void handleSetDitherType() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("t")) {
+    int t = server.arg("t").toInt();
+    if (t >= 0 && t <= 5) {
+      ditherAlgo = (uint8_t)t;
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid value (0-5)");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?t= param");
+  }
+}
+
 void handleSetScale() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (server.hasArg("s")) {
@@ -584,10 +797,11 @@ void handleStats() {
                 ",\"contrast\":" + String(imgContrast, 2) +
                 ",\"brightness\":" + String(imgBrightness, 1) +
                 ",\"scale\":" + String(jpgScale) +
-                ",\"dither\":"    + String(ditherStrength) +
-                ",\"bg\":"        + String(globalBgColor) +
-                ",\"scaling\":"   + String(scalingMode) +
-                ",\"totalKB\":"   + String((uint32_t)(totalBytes / 1024)) + "}";
+                ",\"dither\":"      + String(ditherStrength) +
+                ",\"ditherType\":" + String(ditherAlgo) +
+                ",\"bg\":"          + String(globalBgColor) +
+                ",\"scaling\":"     + String(scalingMode) +
+                ",\"totalKB\":"     + String((uint32_t)(totalBytes / 1024)) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
 }
@@ -773,6 +987,15 @@ void handleRoot() {
       <option value="12">12:MGY</option><option value="13">13:LGN</option><option value="14">14:LBL</option><option value="15">15:LGY</option>
     </select>
     <span style="margin-left:8px">DITHER:</span>
+    <select id="ditherType" onchange="sendDitherType()">
+      <option value="0">NONE</option>
+      <option value="1">BAYER 4x4</option>
+      <option value="2" selected>BAYER 8x8</option>
+      <option value="3">WHITE NOISE</option>
+      <option value="4">BLUE NOISE</option>
+      <option value="5">FLOYD-STEINBERG</option>
+    </select>
+    <span style="margin-left:4px">STR:</span>
     <input type="range" id="dither" min="0" max="8" step="1" value="4" style="width:80px" oninput="updateDitherText()" onchange="sendDither()">
     <span id="dval" class="val">4</span>
   </div>
@@ -866,6 +1089,10 @@ function updateDitherText() {
 async function sendDither() {
   const d = document.getElementById('dither').value;
   try { await fetch('/setdither?d=' + d); } catch(e) {}
+}
+async function sendDitherType() {
+  const t = document.getElementById('ditherType').value;
+  try { await fetch('/setdithertype?t=' + t); } catch(e) {}
 }
 
 // --- Save ---
@@ -1089,6 +1316,9 @@ async function upd() {
       if (s.dither !== undefined && document.activeElement !== document.getElementById('dither')) {
         document.getElementById('dither').value = s.dither;
         updateDitherText();
+      }
+      if (s.ditherType !== undefined && document.activeElement !== document.getElementById('ditherType')) {
+        document.getElementById('ditherType').value = s.ditherType;
       }
 
       const now = Date.now();
@@ -1458,6 +1688,7 @@ void setup() {
   server.on("/setbrightness", handleSetBrightness);
   server.on("/setcontrast", handleSetContrast);
   server.on("/setdither", handleSetDither);
+  server.on("/setdithertype", handleSetDitherType);
   server.on("/setscale", handleSetScale);
   server.on("/setscaling", handleSetScaling);
   server.begin();
@@ -1573,6 +1804,9 @@ void loop() {
         render_buffer = c64_buffer + (1 - active_buffer) * 34005;
         memset(render_buffer, 0, 34005);
         if (scalingMode > 0) memset(color_buffer, 0, sizeof(color_buffer)); // clear black-bar areas for FIT/CROP
+        
+        // Reset Floyd-Steinberg error buffers for the new frame
+        if (ditherAlgo == 5) memset(fs_err_buf, 0, sizeof(fs_err_buf));
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
         lastDecodeResult = (uint32_t)res;
