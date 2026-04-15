@@ -186,10 +186,17 @@ static const char INDEX_HTML[] PROGMEM = R"rawhtml(
     </select>
     <span style="margin-left:8px">BG (MC):</span>
     <select id="bgcolor" onchange="sendBg()" style="padding:4px">
-      <option value="0">0:BLK</option><option value="1">1:WHT</option><option value="2">2:RED</option><option value="3:CYN">3:CYN</option>
+      <option value="0">0:BLK</option><option value="1">1:WHT</option><option value="2">2:RED</option><option value="3">3:CYN</option>
       <option value="4">4:PUR</option><option value="5">5:GRN</option><option value="6">6:BLU</option><option value="7">7:YEL</option>
       <option value="8">8:ORG</option><option value="9">9:BRN</option><option value="10">10:LRD</option><option value="11">11:DGY</option>
       <option value="12">12:MGY</option><option value="13">13:LGN</option><option value="14">14:LBL</option><option value="15">15:LGY</option>
+    </select>
+    <span style="margin-left:8px">PALETTE:</span>
+    <select id="pal-sel" onchange="sendPalette()" style="color:#ffcc80">
+      <option value="0">PEPTO (PAL)</option>
+      <option value="1">COLODORE</option>
+      <option value="2">LEGACY VICE</option>
+      <option value="3">CCS64</option>
     </select>
     <span style="margin-left:8px">DITHER:</span>
     <select id="ditherType" onchange="sendDitherType()">
@@ -211,12 +218,13 @@ static const char INDEX_HTML[] PROGMEM = R"rawhtml(
 </div>
 
 <script>
-const c64Pal = [
-  [0,0,0], [255,255,255], [136,0,0], [170,255,238],
-  [204,68,204], [0,204,85], [0,0,170], [238,238,119],
-  [221,136,85], [102,68,0], [255,119,119], [51,51,51],
-  [119,119,119], [170,255,102], [0,136,255], [187,187,187]
+const palettes = [
+  [[0,0,0], [255,255,255], [104,55,43], [112,164,178], [111,61,134], [88,141,67], [53,40,121], [184,199,111], [111,79,37], [67,57,0], [154,103,89], [68,68,68], [108,108,108], [154,210,132], [108,94,181], [149,149,149]],
+  [[0,0,0], [255,255,255], [129,51,56], [117,205,200], [142,60,151], [86,172,93], [45,48,173], [237,240,175], [142,80,41], [85,56,0], [196,108,113], [74,74,74], [123,123,123], [169,255,159], [112,117,213], [170,170,170]],
+  [[0,0,0], [255,255,255], [136,0,0], [170,255,238], [204,68,204], [0,204,85], [0,0,170], [238,238,119], [221,136,85], [102,68,0], [255,119,119], [51,51,51], [119,119,119], [170,255,102], [0,136,255], [187,187,187]],
+  [[0,0,0], [255,255,255], [192,0,0], [0,255,255], [192,0,192], [0,192,0], [0,0,192], [255,255,0], [192,128,0], [128,64,0], [240,128,128], [64,64,64], [128,128,128], [128,255,128], [128,128,255], [192,192,192]]
 ];
+let currentPaletteIdx = 0, c64Pal = palettes[currentPaletteIdx];
 let running = true, isHires = false, isFLI = false, isGrayFLI = false, isIFLI = false, currentClientMode = 'mc_color', currentBgColor = 0;
 let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 0;
 
@@ -250,6 +258,13 @@ async function sendScaling() { try { await fetch('/setscaling?s=' + document.get
 function updateDitherText() { document.getElementById('dval').innerText = document.getElementById('dither').value; }
 async function sendDither() { try { await fetch('/setdither?d=' + document.getElementById('dither').value); } catch(e) {} }
 async function sendDitherType() { try { await fetch('/setdithertype?t=' + document.getElementById('ditherType').value); } catch(e) {} }
+async function sendPalette() {
+  const p = document.getElementById('pal-sel').value;
+  try {
+    const r = await fetch('/setpalette?p=' + p);
+    if (r.ok) { currentPaletteIdx = parseInt(p); c64Pal = palettes[currentPaletteIdx]; }
+  } catch(e) {}
+}
 
 async function save(t) {
   const r = await fetch('/data?t=' + Date.now()); const bmp = new Uint8Array(await r.arrayBuffer());
@@ -419,6 +434,7 @@ async function upd() {
       if (s.bg !== undefined && document.activeElement !== document.getElementById('bgcolor')) { currentBgColor = s.bg; document.getElementById('bgcolor').value = s.bg; }
       if (s.dither !== undefined && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
       if (s.ditherType !== undefined && document.activeElement !== document.getElementById('ditherType')) document.getElementById('ditherType').value = s.ditherType;
+      if (s.paletteIdx !== undefined && document.activeElement !== document.getElementById('pal-sel')) { currentPaletteIdx = s.paletteIdx; c64Pal = palettes[s.paletteIdx]; document.getElementById('pal-sel').value = s.paletteIdx; }
 
       const now = Date.now();
       if (lastStatsTime > 0) {
@@ -550,10 +566,44 @@ uint8_t globalBgColor = 0;   // User-selected background color
 uint16_t currentJpgWidth = 320;
 uint16_t currentJpgHeight = 200;
 
-// C64 Pepto Palette (RGB888)
-const uint8_t c64_pal_r[16] = {0,255,136,170,204,0,  0,  238,221,102,255,51,119,170,0,  187};
-const uint8_t c64_pal_g[16] = {0,255,0,  255,68, 204,0,  238,136,68, 119,51,119,255,136,187};
-const uint8_t c64_pal_b[16] = {0,255,0,  238,204,85, 170,119,85, 0,  119,51,119,102,255,187};
+// C64 Palettes
+const uint8_t palettes[4][3][16] = {
+  // 0: Pepto (PAL)
+  {
+    {0, 255, 104, 112, 111, 88,  53,  184, 111, 67,  154, 68,  108, 154, 108, 149}, // R
+    {0, 255, 55,  164, 61,  141, 40,  199, 79,  57,  103, 68,  108, 210, 94,  149}, // G
+    {0, 255, 43,  178, 134, 67,  121, 111, 37,  0,   89,  68,  108, 132, 181, 149}  // B
+  },
+  // 1: Colodore
+  {
+    {0, 255, 129, 117, 142, 86,  45,  237, 142, 85,  196, 74,  123, 169, 112, 170}, // R
+    {0, 255, 51,  205, 60,  172, 48,  240, 80,  56,  108, 74,  123, 255, 117, 170}, // G
+    {0, 255, 56,  200, 151, 93,  173, 175, 41,  0,   113, 74,  123, 159, 213, 170}  // B
+  },
+  // 2: Legacy VICE
+  {
+    {0, 255, 136, 170, 204, 0,   0,   238, 221, 102, 255, 51,  119, 170, 0,   187}, // R
+    {0, 255, 0,   255, 68,  204, 0,   238, 136, 68,  119, 51,  119, 255, 136, 187}, // G
+    {0, 255, 0,   238, 204, 85,  170, 119, 85,  0,   119, 51,  119, 102, 255, 187}  // B
+  },
+  // 3: CCS64
+  {
+    {0, 255, 192, 0,   192, 0,   0,   255, 192, 128, 240, 64,  128, 128, 128, 192}, // R
+    {0, 255, 0,   255, 0,   192, 0,   255, 128, 64,  128, 64,  128, 255, 128, 192}, // G
+    {0, 255, 0,   255, 192, 0,   192, 0,   0,   0,   128, 64,  128, 128, 255, 192}  // B
+  }
+};
+
+uint8_t currentPaletteIdx = 0; // Default: Pepto
+uint8_t c64_pal_r[16];
+uint8_t c64_pal_g[16];
+uint8_t c64_pal_b[16];
+
+void updatePalette() {
+  memcpy(c64_pal_r, palettes[currentPaletteIdx][0], 16);
+  memcpy(c64_pal_g, palettes[currentPaletteIdx][1], 16);
+  memcpy(c64_pal_b, palettes[currentPaletteIdx][2], 16);
+}
 
 // Bayer 4x4 ordered dither matrix (centered, range -8..+7)
 const int8_t bayer4x4[4][4] = {
@@ -1261,6 +1311,22 @@ void handleSetScaling() {
   }
 }
 
+void handleSetPalette() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("p")) {
+    int p = server.arg("p").toInt();
+    if (p >= 0 && p <= 3) {
+      currentPaletteIdx = (uint8_t)p;
+      updatePalette();
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid palette index");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?p= param");
+  }
+}
+
 void handleStats() {
   // Count non-zero bytes for debug
   uint32_t nz = 0;
@@ -1291,6 +1357,7 @@ void handleStats() {
                 ",\"ditherType\":" + String(ditherAlgo) +
                 ",\"bg\":"          + String(globalBgColor) +
                 ",\"scaling\":"     + String(scalingMode) +
+                ",\"paletteIdx\":"  + String(currentPaletteIdx) +
                 ",\"totalKB\":"     + String((uint32_t)(totalBytes / 1024)) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
@@ -2274,6 +2341,9 @@ void setup() {
   delay(500);
   Serial.println("\n=== C64 LIVE ENCODER ===");
 
+  // Setup palettes
+  updatePalette();
+
   // Clear buffer
   memset(c64_buffer, 0, sizeof(c64_buffer));
 
@@ -2302,6 +2372,7 @@ void setup() {
   server.on("/setdithertype", handleSetDitherType);
   server.on("/setscale", handleSetScale);
   server.on("/setscaling", handleSetScaling);
+  server.on("/setpalette", handleSetPalette);
   server.begin();
   Serial.println("Web server started");
 }
