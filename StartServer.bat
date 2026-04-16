@@ -1,1 +1,1 @@
-"D:\Program Files\VLC\vlc.exe" screen:// --screen-fps=15 --screen-caching=0 :live-caching=0 --screen-left=0 --screen-top=0 --screen-width=2560 --screen-height=1440 :sout=#transcode{vcodec=mjpg,vb=400,width=320,height=180}:http{mux=mpjpeg,dst=:90/pc.mjpg} :sout-mux-caching=10 :sout-keep
+"D:\Program Files\VLC\vlc.exe" screen:// --screen-fps=15 --screen-caching=0 :live-caching=0 --screen-left=0 --screen-top=0 --screen-width=2560 --screen-height=1440 :sout=#transcode{vcodec=mjpg,vb=800,width=320,height=180}:http{mux=mpjpeg,dst=:90/pc.mjpg} :sout-mux-caching=10 :sout-keep
