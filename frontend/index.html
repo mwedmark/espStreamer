@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>C64 LIVE ENCODER v8.2</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      color: #e0e0ff;
+      font-family: 'Share Tech Mono', monospace;
+      padding: 20px;
+    }
+
+    h2 {
+      font-size: 28px;
+      letter-spacing: 6px;
+      margin: 20px 0;
+      text-shadow: 0 0 20px rgba(100, 140, 255, 0.6);
+      background: linear-gradient(90deg, #6c8cff, #a87fff, #6c8cff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .container {
+      background: rgba(20, 20, 50, 0.7);
+      border: 1px solid rgba(100, 140, 255, 0.3);
+      border-radius: 16px;
+      padding: 24px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      position: relative;
+    }
+
+    canvas {
+      width: 640px;
+      height: 400px;
+      image-rendering: pixelated;
+      border: 3px solid rgba(100, 140, 255, 0.4);
+      border-radius: 8px;
+      background: #000;
+      box-shadow: 0 0 30px rgba(80, 120, 255, 0.15), inset 0 0 60px rgba(0, 0, 0, 0.5);
+      display: block;
+    }
+
+    .mode-badge {
+      text-align: center;
+      font-size: 11px;
+      letter-spacing: 3px;
+      margin-bottom: 8px;
+      padding: 4px 12px;
+      border-radius: 4px;
+      display: inline-block;
+      transition: all 0.3s;
+    }
+
+    .mode-badge.mc {
+      color: #ffd080;
+      background: rgba(255, 180, 0, 0.10);
+      border: 1px solid rgba(255, 180, 0, 0.3);
+    }
+
+    .mode-badge.hr {
+      color: #80ffcc;
+      background: rgba(0, 255, 180, 0.10);
+      border: 1px solid rgba(0, 255, 180, 0.3);
+    }
+
+    .badge-wrap {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 10px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 12px;
+      font-size: 13px;
+      color: #a0b4ff;
+      flex-wrap: wrap;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(100, 140, 255, 0.2);
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 80px;
+      background: rgba(100, 140, 255, 0.2);
+      height: 6px;
+      border-radius: 3px;
+      outline: none;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #6c8cff;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(100, 140, 255, 0.5);
+    }
+
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(100, 140, 255, 0.2);
+      color: #a0ff90;
+      padding: 4px 12px;
+      border: 1px solid rgba(100, 140, 255, 0.4);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      outline: none;
+    }
+
+    select option {
+      background: #16213e;
+      color: #a0b4ff;
+    }
+
+    button {
+      padding: 10px 28px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+      letter-spacing: 2px;
+      cursor: pointer;
+      background: linear-gradient(180deg, rgba(100, 140, 255, 0.2), rgba(60, 80, 180, 0.3));
+      color: #a0b4ff;
+      border: 1px solid rgba(100, 140, 255, 0.4);
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+
+    button:hover {
+      background: linear-gradient(180deg, rgba(100, 140, 255, 0.4), rgba(60, 80, 180, 0.5));
+      box-shadow: 0 0 16px rgba(100, 140, 255, 0.3);
+      color: #fff;
+    }
+
+    #stats {
+      margin-top: 16px;
+      font-size: 12px;
+      color: #7088cc;
+      text-align: center;
+      line-height: 1.8;
+    }
+
+    #stats .val {
+      color: #a0ff90;
+    }
+
+    .dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+      background: #444;
+      transition: background 0.3s;
+    }
+
+    .dot.on {
+      background: #40ff40;
+      box-shadow: 0 0 8px #40ff40;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>&#x25C8; C64 LIVE ENCODER &#x25C8;</h2>
+
+  <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+    <button id="btn-backend-esp" onclick="setBackendMode('esp')"
+      style="background: rgba(100,255,100,0.2); border-color:#40ff40; color:#fff;">Run via ESP32</button>
+    <button id="btn-backend-pc" onclick="setBackendMode('pc')"
+      style="background: rgba(100,140,255,0.2); border-color:#6c8cff; color:#a0b4ff;">Run locally (Browser
+      Engine)</button>
+  </div>
+
+  <div class="container">
+    <div class="badge-wrap"><span class="mode-badge mc" id="badge" style="display:none;"></span></div>
+    <canvas id="c" width="160" height="200"></canvas>
+    <canvas id="offscreen-c" width="320" height="200" style="display:none;"></canvas>
+
+    <div class="controls">
+      <select id="mode-sel" onchange="toggleMode()">
+        <option value="mc_gray">MULTI-COLOR GRAYSCALE</option>
+        <option value="hr_gray">HI-RES GRAYSCALE</option>
+        <option value="mc_color">MULTI-COLOR COLOR</option>
+        <option value="hr_color">HI-RES COLOR</option>
+        <option value="mc_fli">MULTI-COLOR FLI</option>
+        <option value="mc_gray_fli">GRAYSCALE FLI</option>
+        <option value="mc_gray_ifli">GRAYSCALE IFLI</option>
+      </select>
+      <button onclick="captureImage()"
+        style="background: linear-gradient(180deg, rgba(255,100,100,0.2), rgba(180,60,60,0.3)); border-color: rgba(255,100,100,0.4); color:#ffcccc;">&#x1F4F7;
+        CAPTURE</button>
+      <button onclick="save('PRG')">&#x25B6; PRG</button><button onclick="save('KOA')">&#x25B6; KOA</button><button
+        onclick="save('CRT')">&#x25B6; CRT</button>
+    </div>
+    <div class="slider-container">
+      <span>CT: <span id="cval" class="val">1.0</span></span>
+      <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()"
+        onchange="sendContrast()">
+      <span>BR: <span id="bval" class="val">0</span></span>
+      <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()"
+        onchange="sendBrightness()">
+      <select id="pal-sel" onchange="sendPalette()" style="color:#ffcc80">
+        <option value="0">PEPTO (PAL)</option>
+        <option value="1">COLODORE</option>
+      </select>
+      <span>DITH:</span>
+      <input type="range" id="dither" min="0" max="8" step="1" value="4" oninput="updateDitherText()"
+        onchange="sendDither()">
+      <span id="dval" class="val">4</span>
+    </div>
+    <div id="stats"><span class="dot" id="dot"></span><span id="stxt">Booting Diagnostic Engine...</span></div>
+  </div>
+
+  <script src="c64Engine.js?v=8.2"></script>
+  <script src="app.js?v=8.2"></script>
+</body>
+
+</html>
