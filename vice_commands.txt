@@ -1,0 +1,15 @@
+# VICE Monitor Commands for Kung Fu Flash Simulation
+# These commands will be executed when VICE starts
+
+# Set up multicolor bitmap mode
+bank 0
+m D011 1B
+m D018 08
+m D020 00
+m D021 0B
+
+# Display message
+echo "Kung Fu Flash Simulation Ready"
+echo "Load bitmap files with: load "vice_bitmap.bin",8,1"
+echo "Load screen files with: load "vice_screen.bin",8,1" 
+echo "Load color files with: load "vice_color.bin",8,1"

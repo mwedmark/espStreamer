@@ -3,6 +3,11 @@ let currentClientMode = 'mc_gray', isHires = false, isFLI = false, isIFLI = fals
 let running = true, usePCBackend = true, screenshots = [];
 let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 0;
 
+// Kung Fu Flash WebSocket client
+let kungFuWebSocket = null;
+let kungFuConnected = false;
+let kungFuViceMode = false; // VICE simulation mode
+
 // Size tracking for export limits
 const MAX_PRG_SIZE = 65536; // ~64KB max for C64 PRG
 const MAX_CRT_SIZE = 1048576; // 1MB max for EasyFlash CRT
@@ -25,6 +30,151 @@ function sendBg() { const e = document.getElementById('bgcolor'); if (e) apiFetc
 function sendScaling() { const e = document.getElementById('scaling'); if (e) apiFetch('/setscaling?s=' + e.value); }
 function sendPalette() { apiFetch('/setpalette?p=' + document.getElementById('pal-sel').value); }
 function download(d, n) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d])); a.download = n; a.click(); }
+
+// Kung Fu Flash WebSocket functions
+async function connectKungFuFlash() {
+  try {
+    // Choose server based on mode
+    const port = kungFuViceMode ? 8766 : 8765;
+    const serverName = kungFuViceMode ? 'VICE Simulation' : 'Kung Fu Flash';
+    
+    kungFuWebSocket = new WebSocket(`ws://localhost:${port}`);
+    
+    kungFuWebSocket.onopen = function() {
+      console.log(`Connected to ${serverName} server`);
+      kungFuConnected = true;
+      updateKungFuStatus('Connected', true);
+      
+      // Request connection status
+      kungFuWebSocket.send(JSON.stringify({command: 'status'}));
+    };
+    
+    kungFuWebSocket.onmessage = function(event) {
+      const response = JSON.parse(event.data);
+      handleKungFuResponse(response);
+    };
+    
+    kungFuWebSocket.onclose = function() {
+      console.log(`Disconnected from ${serverName} server`);
+      kungFuConnected = false;
+      updateKungFuStatus('Disconnected', false);
+    };
+    
+    kungFuWebSocket.onerror = function(error) {
+      console.error(`${serverName} WebSocket error:`, error);
+      updateKungFuStatus('Error', false);
+    };
+    
+  } catch (error) {
+    console.error('Failed to connect to Kung Fu Flash:', error);
+    updateKungFuStatus('Connection Failed', false);
+  }
+}
+
+function toggleViceMode() {
+  kungFuViceMode = !kungFuViceMode;
+  const modeText = kungFuViceMode ? 'VICE Mode' : 'Hardware Mode';
+  const modeColor = kungFuViceMode ? '#ff8040' : '#40ff40';
+  
+  const modeElement = document.getElementById('vice-mode');
+  if (modeElement) {
+    modeElement.textContent = modeText;
+    modeElement.style.color = modeColor;
+  }
+  
+  // Disconnect if connected
+  if (kungFuWebSocket) {
+    disconnectKungFuFlash();
+  }
+  
+  updateKungFuStatus(`Ready for ${modeText}`, false);
+}
+
+function handleKungFuResponse(response) {
+  if (response.type === 'response') {
+    switch (response.command) {
+      case 'connect':
+        updateKungFuStatus(response.success ? 'USB Connected' : 'USB Failed', response.success);
+        break;
+      case 'stream_frame':
+        updateKungFuStatus(response.success ? 'Frame Sent' : 'Send Failed', response.success);
+        break;
+      case 'status':
+        updateKungFuStatus(response.connected ? 'USB Connected' : 'USB Disconnected', response.connected);
+        break;
+    }
+  } else if (response.type === 'error') {
+    updateKungFuStatus('Error: ' + response.message, false);
+  }
+}
+
+function updateKungFuStatus(status, connected) {
+  const statusElement = document.getElementById('kungfu-status');
+  if (statusElement) {
+    statusElement.textContent = status;
+    statusElement.style.color = connected ? '#40ff40' : '#ff4040';
+  }
+}
+
+async function streamToC64() {
+  if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to Kung Fu Flash server');
+    return;
+  }
+  
+  if (screenshots.length === 0) {
+    alert('No screenshots to stream');
+    return;
+  }
+  
+  try {
+    // Get the latest screenshot
+    const latestScreenshot = screenshots[screenshots.length - 1];
+    
+    // Send frame to server
+    const message = {
+      command: 'stream_frame',
+      image_data: latestScreenshot.thumb
+    };
+    
+    kungFuWebSocket.send(JSON.stringify(message));
+    updateKungFuStatus('Streaming...', true);
+    
+  } catch (error) {
+    console.error('Stream to C64 failed:', error);
+    updateKungFuStatus('Stream Failed', false);
+  }
+}
+
+function testInjection() {
+  if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to Kung Fu Flash server');
+    return;
+  }
+  
+  try {
+    // Send test injection command
+    const message = {
+      command: 'test_injection'
+    };
+    
+    kungFuWebSocket.send(JSON.stringify(message));
+    updateKungFuStatus('Testing injection...', true);
+    
+  } catch (error) {
+    console.error('Test injection failed:', error);
+    updateKungFuStatus('Test Failed', false);
+  }
+}
+
+function disconnectKungFuFlash() {
+  if (kungFuWebSocket) {
+    kungFuWebSocket.close();
+    kungFuWebSocket = null;
+  }
+  kungFuConnected = false;
+  updateKungFuStatus('Disconnected', false);
+}
 
 function calculateCaptureSize() {
   // Estimate size based on mode and number of captures

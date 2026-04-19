@@ -256,6 +256,22 @@
     </div>
     <div id="stats"><span class="dot" id="dot"></span><span id="stxt">Booting Diagnostic Engine...</span></div>
   </div>
+  
+  <!-- Kung Fu Flash Controls -->
+  <div class="container">
+    <h2>KUNG FU FLASH</h2>
+    <div class="controls">
+      <button onclick="toggleViceMode()" class="btn" id="vice-mode-btn">Hardware Mode</button>
+      <button onclick="connectKungFuFlash()" class="btn">Connect</button>
+      <button onclick="streamToC64()" class="btn" id="stream-btn">Stream to C64</button>
+      <button onclick="disconnectKungFuFlash()" class="btn">Disconnect</button>
+      <span id="kungfu-status" style="margin-left: 20px; color: #ff4040;">Disconnected</span>
+    </div>
+    <div style="margin-top: 10px; font-size: 12px; color: #7088cc;">
+      <span id="vice-mode" style="color: #40ff40;">Hardware Mode</span>: Stream to real C64 via Kung Fu Flash cartridge | 
+      <span id="vice-help">VICE Mode</span>: Test with VICE emulator simulation
+    </div>
+  </div>
 
   <script src="c64Engine.js?v=8.2"></script>
   <script src="app.js?v=8.2"></script>
