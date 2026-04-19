@@ -2,6 +2,11 @@
 let currentClientMode = 'mc_gray', isHires = false, isFLI = false, isIFLI = false, currentBgColor = 0;
 let running = true, usePCBackend = true, screenshots = [];
 let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 0;
+
+// Size tracking for export limits
+const MAX_PRG_SIZE = 65536; // ~64KB max for C64 PRG
+const MAX_CRT_SIZE = 1048576; // 1MB max for EasyFlash CRT
+let totalCaptureSize = 0;
 const palettes = [[[0, 0, 0], [255, 255, 255], [104, 55, 43], [112, 164, 178], [111, 61, 134], [88, 141, 67], [53, 40, 121], [184, 199, 111], [111, 79, 37], [67, 57, 0], [154, 103, 89], [68, 68, 68], [108, 108, 108], [154, 210, 132], [108, 94, 181], [149, 149, 149]], [[0, 0, 0], [255, 255, 255], [129, 51, 56], [117, 205, 200], [142, 60, 151], [86, 172, 93], [45, 48, 173], [237, 240, 175], [142, 80, 41], [85, 56, 0], [196, 108, 113], [74, 74, 74], [123, 123, 123], [169, 255, 159], [112, 117, 213], [170, 170, 170]]];
 let currentPaletteIdx = 0, c64Pal = palettes[0];
 async function apiFetch(path) { if (usePCBackend) { return await window.C64Engine.apiCall(path); } return fetch(path); }
@@ -20,14 +25,213 @@ function sendBg() { const e = document.getElementById('bgcolor'); if (e) apiFetc
 function sendScaling() { const e = document.getElementById('scaling'); if (e) apiFetch('/setscaling?s=' + e.value); }
 function sendPalette() { apiFetch('/setpalette?p=' + document.getElementById('pal-sel').value); }
 function download(d, n) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d])); a.download = n; a.click(); }
-async function captureImage() {
-  try {
-    const r = await apiFetch('/data?t=' + Date.now()); if (!r.ok) return;
-    const bmp = new Uint8Array(await r.arrayBuffer());
-    screenshots.push({ mode: currentClientMode, isHires, isFLI, isIFLI, bgColor: parseInt(document.getElementById('bgcolor').value), data: bmp, thumb: document.getElementById('c').toDataURL('image/jpeg', 0.5) });
-  } catch (e) { }
+
+function calculateCaptureSize() {
+  // Estimate size based on mode and number of captures
+  const baseSize = isIFLI ? 49155 : (isFLI ? 32768 : 14145);
+  const slideshowOverhead = screenshots.length * 100; // Rough estimate for slideshow code
+  return baseSize * screenshots.length + slideshowOverhead;
 }
+
+function updateButtonStates() {
+  totalCaptureSize = calculateCaptureSize();
+  
+  // Update PRG button state
+  const prgButtons = document.querySelectorAll('button[onclick*="save(\'PRG\'"]');
+  prgButtons.forEach(btn => {
+    if (totalCaptureSize > MAX_PRG_SIZE) {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+      btn.title = `Too large for PRG (${(totalCaptureSize/1024).toFixed(1)}KB > ${(MAX_PRG_SIZE/1024).toFixed(1)}KB)`;
+    } else {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.title = `Export as PRG (${(totalCaptureSize/1024).toFixed(1)}KB)`;
+    }
+  });
+  
+  // Update CRT button state
+  const crtButtons = document.querySelectorAll('button[onclick*="save(\'CRT\'"]');
+  crtButtons.forEach(btn => {
+    if (totalCaptureSize > MAX_CRT_SIZE) {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+      btn.title = `Too large for CRT (${(totalCaptureSize/1024).toFixed(1)}KB > ${(MAX_CRT_SIZE/1024).toFixed(1)}KB)`;
+    } else {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.title = `Export as CRT (${(totalCaptureSize/1024).toFixed(1)}KB)`;
+    }
+  });
+  
+  // Update KOA button (same as PRG)
+  const koaButtons = document.querySelectorAll('button[onclick*="save(\'KOA\'"]');
+  koaButtons.forEach(btn => {
+    if (totalCaptureSize > MAX_PRG_SIZE) {
+      btn.disabled = true;
+      btn.style.opacity = '0.5';
+      btn.style.cursor = 'not-allowed';
+      btn.title = `Too large for KOA (${(totalCaptureSize/1024).toFixed(1)}KB > ${(MAX_PRG_SIZE/1024).toFixed(1)}KB)`;
+    } else {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      btn.title = `Export as KOA (${(totalCaptureSize/1024).toFixed(1)}KB)`;
+    }
+  });
+  
+  console.log(`Updated button states - Total size: ${(totalCaptureSize/1024).toFixed(1)}KB`);
+}
+function captureImage() {
+  console.log('CAPTURE BUTTON CLICKED!');
+  
+  try {
+    // Test 1: Check if canvas exists
+    const canvas = document.getElementById('c');
+    if (!canvas) {
+      console.error('Canvas not found!');
+      alert('Canvas not found!');
+      return;
+    }
+    console.log('Canvas found:', canvas.width, 'x', canvas.height);
+    
+    // Test 2: Try basic canvas capture
+    const dataURL = canvas.toDataURL('image/png');
+    console.log('Canvas dataURL length:', dataURL.length);
+    
+    // Test 3: Create simple capture
+    const timestamp = new Date().toLocaleTimeString();
+    const capture = {
+      thumb: dataURL,
+      timestamp: timestamp,
+      test: true
+    };
+    
+    screenshots.push(capture);
+    console.log('Screenshot added, total:', screenshots.length);
+    
+    // Update button states based on new total size
+    updateButtonStates();
+    
+    // Test 4: Update UI
+    const countElement = document.getElementById('screenshot-count');
+    if (countElement) {
+      countElement.textContent = screenshots.length;
+      console.log('Updated count display');
+    } else {
+      console.error('Count element not found!');
+    }
+    
+    // Test 5: Show feedback in console only
+    console.log(`Captured frame ${screenshots.length}`);
+    
+    alert(`Capture successful! Frame ${screenshots.length} saved.`);
+    
+  } catch (error) {
+    console.error('Capture error:', error);
+    alert('Capture failed: ' + error.message);
+  }
+}
+
+function viewScreenshots() {
+  console.log('VIEW button clicked, screenshots:', screenshots.length);
+  
+  if (screenshots.length === 0) {
+    alert('No screenshots captured yet. Click the CAPTURE button to save frames.');
+    return;
+  }
+  
+  // Create modal or simple display
+  let html = `<div style="background: rgba(20,20,50,0.95); padding: 20px; border-radius: 16px; max-width: 800px; max-height: 600px; overflow-y: auto;">
+    <h3 style="color: #e0e0ff; margin-bottom: 15px;">Captured Screenshots (${screenshots.length})</h3>`;
+  
+  screenshots.forEach((shot, index) => {
+    // Handle both simplified and full capture data
+    const mode = shot.mode || currentClientMode || 'unknown';
+    const isHires = shot.isHires || currentClientMode.includes('hr') || false;
+    const isFLI = shot.isFLI || currentClientMode.includes('fli') || false;
+    const isIFLI = shot.isIFLI || currentClientMode.includes('ifli') || false;
+    const timestamp = shot.timestamp || 'Unknown time';
+    
+    console.log(`Screenshot ${index}:`, shot);
+    
+    html += `
+      <div style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px;">
+        <div style="display: flex; gap: 15px; align-items: center;">
+          <img src="${shot.thumb}" style="width: 160px; height: 200px; image-rendering: pixelated; border: 2px solid #6c8cff; border-radius: 4px;">
+          <div style="color: #a0b4ff; font-family: 'Share Tech Mono', monospace;">
+            <div><strong>Frame ${index + 1}</strong></div>
+            <div>Mode: ${mode.toUpperCase()}</div>
+            <div>Time: ${timestamp}</div>
+            <div>Colors: ${isHires ? 'Hires' : (isFLI ? 'FLI' : (isIFLI ? 'IFLI' : 'Multicolor'))}</div>
+            <div>Type: ${shot.test ? 'Direct Capture' : 'API Capture'}</div>
+            <div style="margin-top: 10px;">
+              <button onclick="downloadScreenshot(${index})" style="padding: 5px 10px; background: #6c8cff; border: none; border-radius: 4px; color: white; cursor: pointer;">Download</button>
+              <button onclick="deleteScreenshot(${index})" style="padding: 5px 10px; background: #ff6b6b; border: none; border-radius: 4px; color: white; cursor: pointer; margin-left: 5px;">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  });
+  
+  html += `<div style="text-align: center; margin-top: 20px;">
+    <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding: 10px 20px; background: #404080; border: none; border-radius: 8px; color: white; cursor: pointer;">Close</button>
+  </div></div>`;
+  
+  console.log('Creating modal with HTML...');
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000;';
+  modal.innerHTML = html;
+  document.body.appendChild(modal);
+  console.log('Modal added to page');
+}
+
+function downloadScreenshot(index) {
+  console.log(`Downloading screenshot ${index}`);
+  const shot = screenshots[index];
+  
+  // Handle both simplified and full capture data
+  const isHires = shot.isHires || currentClientMode.includes('hr') || false;
+  const mode = shot.mode || currentClientMode || 'capture';
+  const timestamp = shot.timestamp || new Date().toLocaleTimeString();
+  
+  // Create download link directly from dataURL
+  const a = document.createElement('a');
+  a.href = shot.thumb;
+  a.download = `c64_capture_${index + 1}_${mode}_${timestamp.replace(/:/g, '-')}.png`;
+  a.click();
+  
+  console.log(`Downloaded: ${a.download}`);
+}
+
+function deleteScreenshot(index) {
+  screenshots.splice(index, 1);
+  
+  // Update button states based on new total size
+  updateButtonStates();
+  
+  // Update screenshot count display
+  const countElement = document.getElementById('screenshot-count');
+  if (countElement) {
+    countElement.textContent = screenshots.length;
+  }
+  
+  viewScreenshots(); // Refresh the view
+}
+
 async function save(t) {
+  // If we have multiple screenshots, create slideshow
+  if (screenshots.length > 1 && (t === 'PRG' || t === 'KOA')) {
+    console.log(`Creating slideshow with ${screenshots.length} images for ${t}`);
+    await createSlideshow(t);
+    return;
+  }
+  
+  // Single image or CRT export - use original logic
   const r = await apiFetch('/data?t=' + Date.now());
   const rawBmp = new Uint8Array(await r.arrayBuffer());
 
@@ -138,6 +342,241 @@ async function save(t) {
   }
   download(res, 'stream.crt');
 }
+
+async function createSlideshow(type) {
+  try {
+    const shotCount = screenshots ? screenshots.length : 0;
+    
+    if (shotCount === 0) {
+      alert('No screenshots to create slideshow from');
+      return;
+    }
+    
+    // Create minimal bitmap test - just one frame
+    const f = new Uint8Array(10000); // Plenty of space
+    let offset = 0;
+    
+    // PRG header
+    f[0] = 0x01; f[1] = 0x08;
+    f.set([0x0B, 0x08, 0x0A, 0x00, 0x9E, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00], 2);
+    offset = 14;
+    
+    // Minimal bitmap test assembly
+    const bitmapASM = [
+      // Set multicolor bitmap mode
+      0x78, 0xA9, 0x1B, 0x8D, 0x16, 0xD0, // VIC control: multicolor bitmap
+      0xA9, 0x08, 0x8D, 0x18, 0xD0, // Screen at $0400, bitmap at $2000
+      0xA9, 0x00, 0x8D, 0x20, 0xD0, 0xA9, 0x00, 0x8D, 0x21, 0xD0, // Border/bg colors
+      0xA9, 0x0B, 0x8D, 0x22, 0xD0, // Background color
+      
+      // Fill bitmap with test pattern
+      0xA9, 0x00, 0x85, 0xFD, 0xA9, 0x20, 0x85, 0xFC, // Dest pointer = $2000
+      0xA2, 0x00, // LDX #$00
+      0xA9, 0xFF, // LDA #$FF (white pattern)
+      0x99, 0x00, 0x04, // STA $0400,X (screen RAM)
+      0x99, 0x00, 0x06, // STA $0600,X (color RAM)
+      0xE8, // INX
+      0xE0, 0x00, // CPX #$00
+      0xD0, 0xF8, // BNE loop
+      
+      // Fill bitmap area
+      0xA2, 0x00, // LDX #$00
+      0xA9, 0xAA, // LDA #$AA (checkerboard pattern)
+      0x99, 0x00, 0x20, // STA $2000,X (bitmap)
+      0xE8, // INX
+      0xE0, 0x00, // CPX #$00
+      0xD0, 0xF8, // BNE loop
+      
+      0x4C, 0x00, 0xA7 // Infinite loop
+    ];
+    
+    f.set(bitmapASM, offset);
+    offset += bitmapASM.length;
+    
+    const finalData = f.subarray(0, offset);
+    const filename = `bitmap_test_${type.toLowerCase()}.prg`;
+    
+    download(finalData, filename);
+    
+  } catch (error) {
+    alert('Failed to create slideshow: ' + error.message);
+  }
+}
+
+async function convertScreenshotToC64Bitmap(screenshot, frameIndex) {
+  // Convert screenshot to C64 multicolor bitmap format
+  const frameData = new Uint8Array(8192 + 1024 + 1024); // bitmap + screen + color
+  let offset = 0;
+  
+  try {
+    // Create canvas from screenshot
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    await new Promise((resolve) => {
+      img.onload = resolve;
+      img.src = screenshot.thumb;
+    });
+    
+    canvas.width = 160;
+    canvas.height = 200;
+    ctx.drawImage(img, 0, 0, 160, 200);
+    
+    // Get pixel data and convert to C64 colors
+    const imageData = ctx.getImageData(0, 0, 160, 200);
+    const pixels = imageData.data;
+    
+    // Generate bitmap data
+    for (let y = 0; y < 25; y++) {
+      for (let x = 0; x < 40; x++) {
+        // Screen RAM entry
+        frameData[8192 + y * 40 + x] = 0;
+        
+        // Color RAM entry (alternating colors for visibility)
+        frameData[9216 + y * 40 + x] = (frameIndex * 2 + x) % 16;
+        
+        // Bitmap data (8 bytes per character)
+        for (let py = 0; py < 8; py++) {
+          let byte = 0;
+          for (let px = 0; px < 4; px++) {
+            const pixelX = x * 4 + px;
+            const pixelY = y * 8 + py;
+            const pixelIndex = (pixelY * 160 + pixelX) * 4;
+            const r = pixels[pixelIndex], g = pixels[pixelIndex + 1], b = pixels[pixelIndex + 2];
+            
+            // Simple color mapping based on brightness
+            let color = 0;
+            const brightness = (r + g + b) / 3;
+            if (brightness > 200) color = 1; // White
+            else if (brightness > 150) color = 6; // Blue
+            else if (brightness > 100) color = 8; // Orange
+            else if (brightness > 50) color = 12; // Medium gray
+            else color = 0; // Black
+            
+            byte |= (color & 3) << ((3 - px) * 2);
+          }
+          frameData[x * 8 + py + y * 320] = byte;
+        }
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error converting screenshot:', error);
+    // Create simple test pattern as fallback
+    for (let i = 0; i < 8192; i++) {
+      frameData[i] = (frameIndex + 1) % 16 * 17;
+    }
+    for (let i = 8192; i < 10240; i++) {
+      frameData[i] = frameIndex % 16;
+    }
+    for (let i = 10240; i < 11264; i++) {
+      frameData[i] = (frameIndex * 3) % 16;
+    }
+  }
+  
+  return frameData;
+}
+
+async function convertScreenshotToC64(screenshot, frameIndex) {
+  // Convert captured screenshot to proper C64 bitmap format
+  const frameSize = isIFLI ? 49155 : (isFLI ? 32768 : 14145);
+  const frameData = new Uint8Array(frameSize);
+  
+  try {
+    // Create canvas from screenshot thumbnail
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    await new Promise((resolve) => {
+      img.onload = resolve;
+      img.src = screenshot.thumb;
+    });
+    
+    canvas.width = isHires ? 320 : 160;
+    canvas.height = 200;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    
+    // Get pixel data
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+    
+    // Convert to C64 format using the same logic as the engine
+    const cb = new Uint8Array(320 * 200);
+    for (let y = 0; y < 200; y++) {
+      for (let x = 0; x < (isHires ? 320 : 160); x++) {
+        const i = (y * (isHires ? 320 : 160) + x) * 4;
+        const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+        let best = 0, bestDist = 999999;
+        for (let c = 0; c < 16; c++) {
+          const pal = c64Pal[c];
+          const dist = ((r - pal[0]) * (r - pal[0]) * 2) + ((g - pal[1]) * (g - pal[1]) * 4) + ((b - pal[2]) * (b - pal[2]));
+          if (dist < bestDist) { bestDist = dist; best = c; }
+        }
+        cb[y * (isHires ? 320 : 160) + x] = best;
+      }
+    }
+    
+    // Generate C64 bitmap data (simplified version)
+    let offset = 0;
+    const bgC = 0; // Black background
+    
+    if (isHires) {
+      // Hires mode: 8KB bitmap + 1KB color RAM
+      for (let cy = 0; cy < 25; cy++) {
+        for (let cx = 0; cx < 40; cx++) {
+          // Color RAM
+          frameData[8192 + cy * 40 + cx] = 6; // Blue
+          
+          // Bitmap data
+          for (let py = 0; py < 8; py++) {
+            let byte = 0;
+            for (let px = 0; px < 8; px++) {
+              if (cb[(cy * 8 + py) * 320 + (cx * 8 + px)] !== bgC) {
+                byte |= (1 << (7 - px));
+              }
+            }
+            frameData[cx * 8 + py] = byte;
+          }
+        }
+      }
+    } else {
+      // Multicolor mode
+      for (let cy = 0; cy < 25; cy++) {
+        for (let cx = 0; cx < 40; cx++) {
+          // Screen RAM
+          frameData[8192 + cy * 40 + cx] = 0;
+          // Color RAM  
+          frameData[9216 + cy * 40 + cx] = 6;
+          
+          // Bitmap data
+          for (let py = 0; py < 8; py++) {
+            let byte = 0;
+            for (let px = 0; px < 4; px++) {
+              const color = cb[(cy * 8 + py) * 160 + (cx * 4 + px)];
+              byte |= (color & 3) << ((3 - px) * 2);
+            }
+            frameData[cx * 8 + py] = byte;
+          }
+        }
+      }
+    }
+    
+    // Add background color at end
+    frameData[frameSize - 1] = bgC;
+    
+  } catch (error) {
+    console.error('Error converting screenshot:', error);
+    // Fallback: create a simple test pattern
+    for (let i = 0; i < frameSize; i++) {
+      frameData[i] = (frameIndex + 1) % 16;
+    }
+  }
+  
+  return frameData;
+}
+
 async function upd() {
   try {
     const srP = apiFetch('/stats?t=' + Date.now()), rP = apiFetch('/data?t=' + Date.now()); const [sr, r] = await Promise.all([srP, rP]);
@@ -153,7 +592,9 @@ async function upd() {
       if (document.getElementById('ditherType') && document.activeElement !== document.getElementById('ditherType')) { document.getElementById('ditherType').value = s.ditherType; }
     }
     if (r && r.ok) {
-      const d = new Uint8Array(await r.arrayBuffer()); const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+      const d = new Uint8Array(await r.arrayBuffer()); 
+      console.log(`Received data buffer: ${d.length} bytes, first 10:`, d.slice(0, 10));
+      const cv = document.getElementById('c'), ctx = cv.getContext('2d');
       if (isIFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[32767]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, bA = d[cI * 8 + py], sA = d[8192 + sB + cI], cA = d[15360 + cI], clA = [bg, c64Pal[sA >> 4], c64Pal[sA & 15], c64Pal[cA & 15]], bB = d[16384 + cI * 8 + py], sB2 = d[16384 + 8192 + sB + cI], cB = d[16384 + 15360 + cI], clB = [bg, c64Pal[sB2 >> 4], c64Pal[sB2 & 15], c64Pal[cB & 15]]; for (let px = 0; px < 4; px++) { let coA = clA[(bA >> ((3 - px) * 2)) & 3], coB = clB[(bB >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = (coA[0] + coB[0]) >> 1; img.data[o + 1] = (coA[1] + coB[1]) >> 1; img.data[o + 2] = (coA[2] + coB[2]) >> 1; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else if (isFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[16383]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let row = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = row * 40 + x, byte = d[cI * 8 + py], sBy = d[8192 + sB + cI], cBy = d[15360 + cI], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else if (isHires) { const img = ctx.createImageData(320, 200); for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, byte = d[cI * 8 + py], sBy = d[8192 + cI], fg = c64Pal[sBy >> 4], bg = c64Pal[sBy & 15]; for (let bit = 7; bit >= 0; bit--) { let px = x * 8 + (7 - bit), isF = (byte >> bit) & 1, c = isF ? fg : bg, o = (y * 320 + px) * 4; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
@@ -162,4 +603,4 @@ async function upd() {
   } catch (e) { }
   if (running) setTimeout(upd, 70);
 }
-setBackendMode('pc'); updateModeUI(); upd();
+setBackendMode('pc'); updateModeUI(); updateButtonStates(); upd();
