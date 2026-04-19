@@ -6,11 +6,46 @@ window.C64Engine = (function () {
     let offC = null, offCtx = null, imgS = null, lastWT = 0;
     const pals = [{ r: [0, 255, 104, 112, 111, 88, 53, 184, 111, 67, 154, 68, 108, 154, 108, 149], g: [0, 255, 55, 164, 61, 141, 40, 199, 79, 57, 103, 68, 108, 210, 94, 149], b: [0, 255, 43, 178, 134, 67, 121, 111, 37, 0, 89, 68, 108, 132, 181, 149] }, { r: [0, 255, 129, 117, 142, 86, 45, 237, 142, 85, 196, 108, 123, 169, 112, 170], g: [0, 255, 51, 205, 60, 172, 48, 240, 80, 56, 108, 74, 123, 255, 117, 170], b: [0, 255, 56, 200, 151, 93, 173, 175, 41, 0, 113, 74, 123, 159, 213, 170] }];
     let pal = pals[0]; const grayIdx = [0, 1, 11, 12, 15];
+    const b4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+    const b8 = [0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21];
+    const blue = [21, 151, 80, 231, 41, 171, 95, 241, 23, 149, 78, 229, 39, 169, 93, 239, 107, 4, 190, 56, 121, 11, 201, 62, 111, 6, 192, 58, 119, 13, 203, 60, 245, 87, 161, 32, 253, 91, 177, 46, 243, 85, 163, 30, 255, 89, 175, 48, 69, 212, 136, 101, 75, 220, 142, 103, 71, 214, 138, 99, 73, 218, 140, 105, 17, 145, 76, 225, 35, 166, 83, 235, 19, 147, 74, 227, 37, 164, 81, 237, 115, 2, 198, 51, 127, 9, 207, 66, 113, 0, 196, 53, 125, 7, 205, 64, 249, 92, 155, 44, 251, 88, 157, 34, 247, 94, 153, 42, 253, 90, 155, 36, 61, 209, 131, 109, 63, 211, 133, 102, 59, 213, 129, 107, 65, 215, 131, 106, 22, 152, 79, 230, 42, 172, 94, 242, 24, 150, 77, 228, 40, 170, 92, 240, 108, 5, 191, 57, 122, 12, 200, 63, 110, 7, 193, 59, 118, 14, 202, 61, 244, 86, 160, 31, 254, 90, 176, 47, 242, 84, 162, 31, 254, 88, 174, 49, 70, 213, 137, 100, 74, 221, 143, 104, 72, 215, 139, 98, 74, 219, 141, 106, 18, 146, 75, 224, 36, 167, 84, 236, 20, 148, 73, 226, 38, 165, 82, 238, 116, 3, 199, 52, 126, 8, 206, 67, 114, 1, 197, 54, 124, 6, 204, 65, 248, 93, 154, 45, 250, 89, 156, 35, 246, 95, 152, 43, 252, 91, 154, 37, 62, 210, 132, 108, 64, 212, 134, 103, 60, 214, 130, 106, 66, 216, 132, 105];
     function dist(c1, c2) { return (Math.abs(pal.r[c1] - pal.r[c2]) * 2) + (Math.abs(pal.g[c1] - pal.g[c2]) * 4) + Math.abs(pal.b[c1] - pal.b[c2]); }
     function log(m) { const s = document.getElementById('stxt'); if (s) s.innerText = m; }
     function process(idat, wT, isH, isF, isI, isG) {
         const d = idat.data; let cb = new Uint8Array(200 * 320); let aP = isG ? grayIdx : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-        for (let y = 0; y < 200; y++) { for (let x = 0; x < wT; x++) { let i = (y * wT + x) * 4, r = (((d[i] - 128) * cf) >> 8) + 128 + bv, g = (((d[i + 1] - 128) * cf) >> 8) + 128 + bv, bl = (((d[i + 2] - 128) * cf) >> 8) + 128 + bv; r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); bl = Math.max(0, Math.min(255, bl)); let bd = 0xFFFFFF, bc = 0; for (let it of aP) { let dy = (Math.abs(r - pal.r[it]) * 2) + (Math.abs(g - pal.g[it]) * 4) + Math.abs(bl - pal.b[it]); if (dy < bd) { bd = dy; bc = it; } } cb[y * wT + x] = bc; } }
+        if (da == 5) {
+            let er = new Float32Array(322 * 201 * 3).fill(0), eS = ds / 8.0;
+            for (let y = 0; y < 200; y++) {
+                for (let x = 0; x < wT; x++) {
+                    let i = (y * wT + x) * 4, ei = (y * 322 + x) * 3;
+                    let r = (((d[i] - 128) * cf) >> 8) + 128 + bv + er[ei], g = (((d[i + 1] - 128) * cf) >> 8) + 128 + bv + er[ei + 1], bl = (((d[i + 2] - 128) * cf) >> 8) + 128 + bv + er[ei + 2];
+                    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); bl = Math.max(0, Math.min(255, bl));
+                    let bd = 0xFFFFFF, bc = 0; for (let it of aP) { let dy = (Math.abs(r - pal.r[it]) * 2) + (Math.abs(g - pal.g[it]) * 4) + Math.abs(bl - pal.b[it]); if (dy < bd) { bd = dy; bc = it; } }
+                    cb[y * wT + x] = bc;
+                    if (eS > 0) {
+                        let rE = (r - pal.r[bc]) * eS, gE = (g - pal.g[bc]) * eS, bE = (bl - pal.b[bc]) * eS;
+                        const diff = (nx, ny, w) => { if (nx >= 0 && nx < wT && ny < 200) { let ni = (ny * 322 + nx) * 3; er[ni] += rE * w; er[ni + 1] += gE * w; er[ni + 2] += bE * w; } };
+                        diff(x + 1, y, 7 / 16); diff(x - 1, y + 1, 3 / 16); diff(x, y + 1, 5 / 16); diff(x + 1, y + 1, 1 / 16);
+                    }
+                }
+            }
+        } else {
+            for (let y = 0; y < 200; y++) {
+                for (let x = 0; x < wT; x++) {
+                    let i = (y * wT + x) * 4, r = (((d[i] - 128) * cf) >> 8) + 128 + bv, g = (((d[i + 1] - 128) * cf) >> 8) + 128 + bv, bl = (((d[i + 2] - 128) * cf) >> 8) + 128 + bv;
+                    if (da > 0 && ds > 0) {
+                        let thr = 0; if (da == 1) thr = (b4[(y % 4) * 4 + (x % 4)] / 16) - 0.5;
+                        else if (da == 2) thr = (b8[(y % 8) * 8 + (x % 8)] / 64) - 0.5;
+                        else if (da == 3) thr = Math.random() - 0.5;
+                        else if (da == 4) thr = (blue[(y % 16) * 16 + (x % 16)] / 255) - 0.5;
+                        let s = ds * 12; r += thr * s; g += thr * s; bl += thr * s;
+                    }
+                    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); bl = Math.max(0, Math.min(255, bl));
+                    let bd = 0xFFFFFF, bc = 0; for (let it of aP) { let dy = (Math.abs(r - pal.r[it]) * 2) + (Math.abs(g - pal.g[it]) * 4) + Math.abs(bl - pal.b[it]); if (dy < bd) { bd = dy; bc = it; } }
+                    cb[y * wT + x] = bc;
+                }
+            }
+        }
         let mF = isI ? 2 : 1; for (let f = 0; f < mF; f++) {
             let base = (1 - activeB) * 32768 + (f * 16384);
             for (let cy = 0; cy < 25; cy++) {

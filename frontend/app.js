@@ -5,8 +5,9 @@ let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 
 const palettes = [[[0, 0, 0], [255, 255, 255], [104, 55, 43], [112, 164, 178], [111, 61, 134], [88, 141, 67], [53, 40, 121], [184, 199, 111], [111, 79, 37], [67, 57, 0], [154, 103, 89], [68, 68, 68], [108, 108, 108], [154, 210, 132], [108, 94, 181], [149, 149, 149]], [[0, 0, 0], [255, 255, 255], [129, 51, 56], [117, 205, 200], [142, 60, 151], [86, 172, 93], [45, 48, 173], [237, 240, 175], [142, 80, 41], [85, 56, 0], [196, 108, 113], [74, 74, 74], [123, 123, 123], [169, 255, 159], [112, 117, 213], [170, 170, 170]]];
 let currentPaletteIdx = 0, c64Pal = palettes[0];
 async function apiFetch(path) { if (usePCBackend) { return await window.C64Engine.apiCall(path); } return fetch(path); }
-function setBackendMode(m) { usePCBackend = (m === 'pc'); document.getElementById('btn-backend-pc').style.borderColor = usePCBackend ? '#40ff40' : '#6c8cff'; if (usePCBackend) window.C64Engine.start(); else window.C64Engine.stop(); }
-function toggleMode() { const m = document.getElementById('mode-sel').value; currentClientMode = m; updateModeUI(); apiFetch('/setmode?m=' + m); }
+function setBackendMode(m) { usePCBackend = (m === 'pc'); document.getElementById('btn-backend-pc').style.borderColor = usePCBackend ? '#40ff40' : '#6c8cff'; if (usePCBackend) window.C64Engine.start(); else window.C64Engine.stop(); syncAll(); }
+function syncAll() { sendContrast(); sendBrightness(); sendBg(); sendPalette(); sendDither(); sendDitherType(); }
+function toggleMode() { const m = document.getElementById('mode-sel').value; currentClientMode = m; updateModeUI(); apiFetch('/setmode?m=' + m); syncAll(); }
 function updateModeUI() { isHires = currentClientMode.includes('hr'); isFLI = currentClientMode.includes('fli'); isIFLI = currentClientMode.includes('ifli'); const cv = document.getElementById('c'); cv.width = isHires ? 320 : 160; cv.height = 200; let bge = document.getElementById('badge'); if (bge) { bge.style.display = 'inline-block'; bge.innerText = currentClientMode.toUpperCase().replace(/_/g, ' '); } }
 function updateContrastText() { document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1); }
 function sendContrast() { apiFetch('/setcontrast?c=' + document.getElementById('contrast').value); }
@@ -14,9 +15,9 @@ function updateBrightnessText() { document.getElementById('bval').innerText = do
 function sendBrightness() { apiFetch('/setbrightness?b=' + document.getElementById('brightness').value); }
 function updateDitherText() { document.getElementById('dval').innerText = document.getElementById('dither').value; }
 function sendDither() { apiFetch('/setdither?d=' + document.getElementById('dither').value); }
-function sendDitherType() { apiFetch('/setdithertype?t=' + document.getElementById('ditherType').value); }
-function sendBg() { apiFetch('/setbg?c=' + document.getElementById('bgcolor').value); }
-function sendScaling() { apiFetch('/setscaling?s=' + document.getElementById('scaling').value); }
+function sendDitherType() { apiFetch('/setdithertype?t=' + document.getElementById('ditherType').value); sendDither(); }
+function sendBg() { const e = document.getElementById('bgcolor'); if (e) apiFetch('/setbg?c=' + e.value); }
+function sendScaling() { const e = document.getElementById('scaling'); if (e) apiFetch('/setscaling?s=' + e.value); }
 function sendPalette() { apiFetch('/setpalette?p=' + document.getElementById('pal-sel').value); }
 function download(d, n) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d])); a.download = n; a.click(); }
 async function captureImage() {
@@ -147,9 +148,10 @@ async function upd() {
       currentBgColor = s.bg; let dotE = document.getElementById('dot'); if (dotE) dotE.className = s.connected ? 'dot on' : 'dot';
       let stText = 'Status: ' + (s.connected ? 'LIVE' : 'DISCONNECTED') + ' | FPS: ' + Math.max(0, currentFPS) + ' | ' + Math.max(0, currentKBs) + ' KB/s';
       let stE = document.getElementById('stxt'); if (stE) stE.innerHTML = stText;
-      if (document.activeElement !== document.getElementById('contrast')) { document.getElementById('contrast').value = s.contrast; updateContrastText(); }
-      if (document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
-      if (document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
+      if (document.getElementById('contrast') && document.activeElement !== document.getElementById('contrast')) { document.getElementById('contrast').value = s.contrast; updateContrastText(); }
+      if (document.getElementById('brightness') && document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
+      if (document.getElementById('dither') && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
+      if (document.getElementById('ditherType') && document.activeElement !== document.getElementById('ditherType')) { document.getElementById('ditherType').value = s.ditherType; }
     }
     if (r && r.ok) {
       const d = new Uint8Array(await r.arrayBuffer()); const cv = document.getElementById('c'), ctx = cv.getContext('2d');

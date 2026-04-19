@@ -242,6 +242,14 @@
       <input type="range" id="dither" min="0" max="8" step="1" value="4" oninput="updateDitherText()"
         onchange="sendDither()">
       <span id="dval" class="val">4</span>
+      <select id="ditherType" onchange="sendDitherType()" style="color:#80ffcc; margin-left: 10px;">
+        <option value="0">NO DITHER</option>
+        <option value="1">BAYER 4X4</option>
+        <option value="2">BAYER 8X8</option>
+        <option value="3">WHITE NOISE</option>
+        <option value="4">BLUE NOISE</option>
+        <option value="5">FLOYD-STEINBERG</option>
+      </select>
     </div>
     <div id="stats"><span class="dot" id="dot"></span><span id="stxt">Booting Diagnostic Engine...</span></div>
   </div>
