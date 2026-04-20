@@ -198,9 +198,11 @@
 <body>
   <h2>&#x25C8; C64 LIVE ENCODER &#x25C8;</h2>
 
-  <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+  <div style="margin-bottom: 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
     <button id="btn-backend-esp" onclick="setBackendMode('esp')"
       style="background: rgba(100,255,100,0.2); border-color:#40ff40; color:#fff;">Run via ESP32</button>
+    <input id="esp-ip" type="text" value="192.168.50.145" placeholder="ESP32 IP"
+      style="font-family:'Share Tech Mono',monospace; font-size:13px; padding:8px 10px; background:rgba(0,0,0,0.4); color:#a0ffb0; border:1px solid #40ff40; border-radius:6px; width:150px; outline:none;">
     <button id="btn-backend-pc" onclick="setBackendMode('pc')"
       style="background: rgba(100,140,255,0.2); border-color:#6c8cff; color:#a0b4ff;">Run locally (Browser
       Engine)</button>

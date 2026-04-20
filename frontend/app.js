@@ -14,7 +14,13 @@ const MAX_CRT_SIZE = 1048576; // 1MB max for EasyFlash CRT
 let totalCaptureSize = 0;
 const palettes = [[[0, 0, 0], [255, 255, 255], [104, 55, 43], [112, 164, 178], [111, 61, 134], [88, 141, 67], [53, 40, 121], [184, 199, 111], [111, 79, 37], [67, 57, 0], [154, 103, 89], [68, 68, 68], [108, 108, 108], [154, 210, 132], [108, 94, 181], [149, 149, 149]], [[0, 0, 0], [255, 255, 255], [129, 51, 56], [117, 205, 200], [142, 60, 151], [86, 172, 93], [45, 48, 173], [237, 240, 175], [142, 80, 41], [85, 56, 0], [196, 108, 113], [74, 74, 74], [123, 123, 123], [169, 255, 159], [112, 117, 213], [170, 170, 170]]];
 let currentPaletteIdx = 0, c64Pal = palettes[0];
-async function apiFetch(path) { if (usePCBackend) { return await window.C64Engine.apiCall(path); } return fetch(path); }
+let espBaseUrl = 'http://192.168.50.145'; // Updated from input field
+async function apiFetch(path) {
+  if (usePCBackend) { return await window.C64Engine.apiCall(path); }
+  const ipEl = document.getElementById('esp-ip');
+  if (ipEl) espBaseUrl = 'http://' + ipEl.value.replace(/^https?:\/\//, '');
+  return fetch(espBaseUrl + path);
+}
 function setBackendMode(m) { usePCBackend = (m === 'pc'); document.getElementById('btn-backend-pc').style.borderColor = usePCBackend ? '#40ff40' : '#6c8cff'; if (usePCBackend) window.C64Engine.start(); else window.C64Engine.stop(); syncAll(); }
 function syncAll() { sendContrast(); sendBrightness(); sendBg(); sendPalette(); sendDither(); sendDitherType(); }
 function toggleMode() { const m = document.getElementById('mode-sel').value; currentClientMode = m; updateModeUI(); apiFetch('/setmode?m=' + m); syncAll(); }

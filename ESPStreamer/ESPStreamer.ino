@@ -1024,7 +1024,7 @@ void packC64Frame() {
             }
             bitmap_ram[cellIdx * 8 + py] = byte;
           }
-      } else if (IS_HIRES) {
+        } else if (IS_HIRES) {
         int counts[16] = {0};
         for (int py=0; py<8; py++) {
           for (int px=0; px<8; px++) {
@@ -1114,14 +1114,14 @@ void packC64Frame() {
       }
     }
   }
-}
-
+  // Write global background color into the frame trailer byte
   if (IS_IFLI) {
     render_buffer[34000] = globalBgColor;
   } else if (IS_FLI) {
     render_buffer[17000] = globalBgColor;
   }
-}
+} // end frame loop
+} // end packC64Frame
 
 // Legacy Gray functions
 inline int16_t get_gray(uint16_t p) {
