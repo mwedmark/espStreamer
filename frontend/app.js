@@ -182,114 +182,79 @@ function disconnectKungFuFlash() {
   updateKungFuStatus('Disconnected', false);
 }
 
+// Per-frame size: 10000 bytes for MC, 17000 for FLI, 34000 for IFLI
+function frameSizeForMode(mode) {
+  if (!mode) mode = currentClientMode;
+  return mode.includes('ifli') ? 34000 : (mode.includes('fli') ? 17000 : 10000);
+}
+// PRG slideshow: frames at $4000, $6710, $8E20 (max 3 frames)
+// Bitmap copy writes to $2000-$3F3F — any frame below $4000 gets overwritten!
+// With $0001=$36 (BASIC ROM off), $A000-$BFFF is accessible RAM.
+// Frame 2 ($8E20-$B52F) crosses into that area safely.
+// Frame 3 would start at $B530 and end at $DC3F, crossing I/O at $D000 — not safe.
+const MAX_PRG_FRAMES = 3;
+function prgSlideshowSize(nFrames) {
+  nFrames = Math.min(nFrames, MAX_PRG_FRAMES);
+  const frameBase = [0x4000, 0x6710, 0x8E20];
+  return 2 + (frameBase[nFrames - 1] + 10000 - 0x0801);
+}
+
 function calculateCaptureSize() {
-  // Estimate size based on mode and number of captures
-  const baseSize = isIFLI ? 49155 : (isFLI ? 32768 : 14145);
-  const slideshowOverhead = screenshots.length * 100; // Rough estimate for slideshow code
-  return baseSize * screenshots.length + slideshowOverhead;
+  const n = screenshots.length;
+  if (n === 0) return 0;
+  const fsize = frameSizeForMode(screenshots[0] ? screenshots[0].mode : null);
+  if (n === 1) return 14145; // single PRG min size
+  return prgSlideshowSize(n); // multi-frame PRG size estimate
 }
 
 function updateButtonStates() {
+  const n = screenshots.length;
   totalCaptureSize = calculateCaptureSize();
-  
-  // Update PRG button state
-  const prgButtons = document.querySelectorAll('button[onclick*="save(\'PRG\'"]');
-  prgButtons.forEach(btn => {
-    if (totalCaptureSize > MAX_PRG_SIZE) {
-      btn.disabled = true;
-      btn.style.opacity = '0.5';
-      btn.style.cursor = 'not-allowed';
-      btn.title = `Too large for PRG (${(totalCaptureSize/1024).toFixed(1)}KB > ${(MAX_PRG_SIZE/1024).toFixed(1)}KB)`;
-    } else {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.style.cursor = 'pointer';
-      btn.title = `Export as PRG (${(totalCaptureSize/1024).toFixed(1)}KB)`;
-    }
+  const fsize = frameSizeForMode(screenshots[0] ? screenshots[0].mode : null);
+  const perFrame = (fsize / 1024).toFixed(1);
+  const totalKB = (totalCaptureSize / 1024).toFixed(1);
+  const multiPRGSize = n > 1 ? prgSlideshowSize(Math.min(n, MAX_PRG_FRAMES)) : 14145;
+  const prgOK = multiPRGSize <= MAX_PRG_SIZE;
+  const crtOK = n * fsize <= MAX_CRT_SIZE;
+
+  // Update size display
+  let sizeEl = document.getElementById('size-info');
+  if (sizeEl) {
+    if (n === 0) sizeEl.innerHTML = '';
+    else sizeEl.innerHTML = `<span style="color:#a0b4ff">${perFrame} KB/frame &nbsp;|&nbsp; <span style="color:${prgOK?'#a0ff90':'#ff6060'}">${(multiPRGSize/1024).toFixed(1)} KB PRG</span> &nbsp;|&nbsp; ${n} frame${n>1?'s':''}</span>`;
+  }
+
+  document.querySelectorAll('button[onclick*="save(\'PRG\'"]').forEach(btn => {
+    btn.disabled = !prgOK;
+    btn.style.opacity = prgOK ? '1' : '0.5';
+    btn.style.cursor = prgOK ? 'pointer' : 'not-allowed';
+    btn.title = prgOK ? `PRG slideshow (${(multiPRGSize/1024).toFixed(1)} KB)` : `Too large: ${(multiPRGSize/1024).toFixed(0)} KB > 64 KB. Max ${MAX_PRG_FRAMES} frames.`;
   });
-  
-  // Update CRT button state
-  const crtButtons = document.querySelectorAll('button[onclick*="save(\'CRT\'"]');
-  crtButtons.forEach(btn => {
-    if (totalCaptureSize > MAX_CRT_SIZE) {
-      btn.disabled = true;
-      btn.style.opacity = '0.5';
-      btn.style.cursor = 'not-allowed';
-      btn.title = `Too large for CRT (${(totalCaptureSize/1024).toFixed(1)}KB > ${(MAX_CRT_SIZE/1024).toFixed(1)}KB)`;
-    } else {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.style.cursor = 'pointer';
-      btn.title = `Export as CRT (${(totalCaptureSize/1024).toFixed(1)}KB)`;
-    }
+  document.querySelectorAll('button[onclick*="save(\'CRT\'"]').forEach(btn => {
+    btn.disabled = !crtOK;
+    btn.style.opacity = crtOK ? '1' : '0.5';
+    btn.title = crtOK ? `CRT slideshow (${n} frames)` : `Too many frames for 1MB CRT`;
   });
-  
-  // Update KOA button (same as PRG)
-  const koaButtons = document.querySelectorAll('button[onclick*="save(\'KOA\'"]');
-  koaButtons.forEach(btn => {
-    if (totalCaptureSize > MAX_PRG_SIZE) {
-      btn.disabled = true;
-      btn.style.opacity = '0.5';
-      btn.style.cursor = 'not-allowed';
-      btn.title = `Too large for KOA (${(totalCaptureSize/1024).toFixed(1)}KB > ${(MAX_PRG_SIZE/1024).toFixed(1)}KB)`;
-    } else {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.style.cursor = 'pointer';
-      btn.title = `Export as KOA (${(totalCaptureSize/1024).toFixed(1)}KB)`;
-    }
+  document.querySelectorAll('button[onclick*="save(\'KOA\'"]').forEach(btn => {
+    btn.title = 'KOA: single frame export';
   });
-  
-  console.log(`Updated button states - Total size: ${(totalCaptureSize/1024).toFixed(1)}KB`);
 }
-function captureImage() {
-  console.log('CAPTURE BUTTON CLICKED!');
-  
+async function captureImage() {
+  const canvas = document.getElementById('c');
+  if (!canvas) { alert('Canvas not found!'); return; }
   try {
-    // Test 1: Check if canvas exists
-    const canvas = document.getElementById('c');
-    if (!canvas) {
-      console.error('Canvas not found!');
-      alert('Canvas not found!');
-      return;
-    }
-    console.log('Canvas found:', canvas.width, 'x', canvas.height);
-    
-    // Test 2: Try basic canvas capture
-    const dataURL = canvas.toDataURL('image/png');
-    console.log('Canvas dataURL length:', dataURL.length);
-    
-    // Test 3: Create simple capture
+    // Fetch raw C64 binary data alongside the visual thumbnail
+    const r = await apiFetch('/data?t=' + Date.now());
+    const bmpData = new Uint8Array(await r.arrayBuffer());
+    const thumb = canvas.toDataURL('image/png');
     const timestamp = new Date().toLocaleTimeString();
-    const capture = {
-      thumb: dataURL,
-      timestamp: timestamp,
-      test: true
-    };
-    
-    screenshots.push(capture);
-    console.log('Screenshot added, total:', screenshots.length);
-    
-    // Update button states based on new total size
+    screenshots.push({ thumb, bmpData, timestamp, mode: currentClientMode, isHires, isFLI, isIFLI });
+    document.getElementById('screenshot-count').textContent = screenshots.length;
     updateButtonStates();
-    
-    // Test 4: Update UI
-    const countElement = document.getElementById('screenshot-count');
-    if (countElement) {
-      countElement.textContent = screenshots.length;
-      console.log('Updated count display');
-    } else {
-      console.error('Count element not found!');
-    }
-    
-    // Test 5: Show feedback in console only
-    console.log(`Captured frame ${screenshots.length}`);
-    
-    alert(`Capture successful! Frame ${screenshots.length} saved.`);
-    
-  } catch (error) {
-    console.error('Capture error:', error);
-    alert('Capture failed: ' + error.message);
+    console.log(`Frame ${screenshots.length} captured, ${bmpData.length} bytes`);
+  } catch(e) {
+    console.error('Capture error:', e);
+    alert('Capture failed: ' + e.message);
   }
 }
 
@@ -380,12 +345,9 @@ function deleteScreenshot(index) {
 }
 
 async function save(t) {
-  // If we have multiple screenshots, create slideshow
-  if (screenshots.length > 1 && (t === 'PRG' || t === 'KOA')) {
-    console.log(`Creating slideshow with ${screenshots.length} images for ${t}`);
-    await createSlideshow(t);
-    return;
-  }
+  // Multi-frame: route to slideshow generators
+  if (screenshots.length > 1 && t === 'PRG') { await createSlideshow('PRG'); return; }
+  if (screenshots.length > 1 && t === 'CRT') { await createSlideshow('CRT'); return; }
   
   // Single image or CRT export - use original logic
   const r = await apiFetch('/data?t=' + Date.now());
@@ -499,64 +461,162 @@ async function save(t) {
   download(res, 'stream.crt');
 }
 
-async function createSlideshow(type) {
-  try {
-    const shotCount = screenshots ? screenshots.length : 0;
-    
-    if (shotCount === 0) {
-      alert('No screenshots to create slideshow from');
-      return;
-    }
-    
-    // Create minimal bitmap test - just one frame
-    const f = new Uint8Array(10000); // Plenty of space
-    let offset = 0;
-    
-    // PRG header
-    f[0] = 0x01; f[1] = 0x08;
-    f.set([0x0B, 0x08, 0x0A, 0x00, 0x9E, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00], 2);
-    offset = 14;
-    
-    // Minimal bitmap test assembly
-    const bitmapASM = [
-      // Set multicolor bitmap mode
-      0x78, 0xA9, 0x1B, 0x8D, 0x16, 0xD0, // VIC control: multicolor bitmap
-      0xA9, 0x08, 0x8D, 0x18, 0xD0, // Screen at $0400, bitmap at $2000
-      0xA9, 0x00, 0x8D, 0x20, 0xD0, 0xA9, 0x00, 0x8D, 0x21, 0xD0, // Border/bg colors
-      0xA9, 0x0B, 0x8D, 0x22, 0xD0, // Background color
-      
-      // Fill bitmap with test pattern
-      0xA9, 0x00, 0x85, 0xFD, 0xA9, 0x20, 0x85, 0xFC, // Dest pointer = $2000
-      0xA2, 0x00, // LDX #$00
-      0xA9, 0xFF, // LDA #$FF (white pattern)
-      0x99, 0x00, 0x04, // STA $0400,X (screen RAM)
-      0x99, 0x00, 0x06, // STA $0600,X (color RAM)
-      0xE8, // INX
-      0xE0, 0x00, // CPX #$00
-      0xD0, 0xF8, // BNE loop
-      
-      // Fill bitmap area
-      0xA2, 0x00, // LDX #$00
-      0xA9, 0xAA, // LDA #$AA (checkerboard pattern)
-      0x99, 0x00, 0x20, // STA $2000,X (bitmap)
-      0xE8, // INX
-      0xE0, 0x00, // CPX #$00
-      0xD0, 0xF8, // BNE loop
-      
-      0x4C, 0x00, 0xA7 // Infinite loop
-    ];
-    
-    f.set(bitmapASM, offset);
-    offset += bitmapASM.length;
-    
-    const finalData = f.subarray(0, offset);
-    const filename = `bitmap_test_${type.toLowerCase()}.prg`;
-    
-    download(finalData, filename);
-    
-  } catch (error) {
-    alert('Failed to create slideshow: ' + error.message);
+// ==========================================================
+// Slideshow PRG generator
+// Frames at $1000, $3710, $5E20, $8530 (max 4 for PRG)
+// Machine code at $080D (217 bytes), frame table at $0900
+// ==========================================================
+function buildSlideshowPRG(frames, bgColor) {
+  const n = Math.min(frames.length, MAX_PRG_FRAMES);
+  // Frame storage starts at $4000 — safely above bitmap copy dest ($2000-$3F3F)
+  const frameAddrs = [0x4000, 0x6710, 0x8E20];
+  const tableAddr  = 0x0900;
+  const showFrameAbs = 0x082D; // $080D + 32 bytes of init code
+
+  // Assembled 6502 machine code (217 bytes) starting at $080D:
+  // - Inits VIC for MC bitmap, disables BASIC ROM ($0001=$36 to access $A000 RAM)
+  // - Copies each frame's bitmap->$2000, screen->$0400, color->$D800
+  // - Waits ~2s via raster-$FE counting, then advances frame and loops
+  const asm = [
+    0x78,                               // SEI
+    0xA9,0x36, 0x85,0x01,              // LDA #$36, STA $01 (BASIC ROM off)
+    0xA9,0x3B, 0x8D,0x11,0xD0,        // LDA #$3B, STA $D011 (bitmap on)
+    0xA9,0xD8, 0x8D,0x16,0xD0,        // LDA #$D8, STA $D016 (multicolor)
+    0xA9,0x18, 0x8D,0x18,0xD0,        // LDA #$18, STA $D018 (scr@$0400 bmp@$2000)
+    0xA9,bgColor&0xFF, 0x8D,0x20,0xD0,0x8D,0x21,0xD0, // border+bg
+    0xA9,0x00, 0x85,0xFB,              // LDA #0, STA $FB (frame_idx)
+    // show_frame: (offset 32 = $082D)
+    0xA5,0xFB, 0x0A, 0xAA,            // LDA $FB; ASL; TAX
+    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFD, // LDA tbl,X → src_lo
+    0xE8,
+    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFE, // LDA tbl,X → src_hi
+    // Copy bitmap: dest=$2000, 31 pages + 64 bytes
+    0xA9,0x00,0x85,0x02, 0xA9,0x20,0x85,0x03, // dest=$2000
+    0xA2,0x1F, 0xA0,0x00,              // LDX #31, LDY #0
+    0xB1,0xFD, 0x91,0x02, 0xC8,0xD0,0xF9, // inner 256-byte loop
+    0xE6,0xFE, 0xE6,0x03, 0xCA,0xD0,0xF2, // advance ptrs, outer loop
+    0xA0,0x00, 0xB1,0xFD, 0x91,0x02, 0xC8,0xC0,0x40,0xD0,0xF7, // 64 remaining
+    0xA5,0xFD,0x18,0x69,0x40,0x85,0xFD, 0x90,0x02,0xE6,0xFE, // advance src +64
+    // Copy screen: dest=$0400, 3 pages + 232 bytes
+    0xA9,0x00,0x85,0x02, 0xA9,0x04,0x85,0x03,
+    0xA2,0x03, 0xA0,0x00,
+    0xB1,0xFD, 0x91,0x02, 0xC8,0xD0,0xF9,
+    0xE6,0xFE, 0xE6,0x03, 0xCA,0xD0,0xF2,
+    0xA0,0x00, 0xB1,0xFD, 0x91,0x02, 0xC8,0xC0,0xE8,0xD0,0xF7,
+    0xA5,0xFD,0x18,0x69,0xE8,0x85,0xFD, 0x90,0x02,0xE6,0xFE, // advance +232
+    // Copy color: dest=$D800, 3 pages + 232 bytes
+    0xA9,0x00,0x85,0x02, 0xA9,0xD8,0x85,0x03,
+    0xA2,0x03, 0xA0,0x00,
+    0xB1,0xFD, 0x91,0x02, 0xC8,0xD0,0xF9,
+    0xE6,0xFE, 0xE6,0x03, 0xCA,0xD0,0xF2,
+    0xA0,0x00, 0xB1,0xFD, 0x91,0x02, 0xC8,0xC0,0xE8,0xD0,0xF7,
+    // Wait: count 100 raster-$FE crossings (~2s at 50Hz)
+    0xA9,100, 0x85,0xFC,
+    0xAD,0x12,0xD0, 0xC9,0xFE, 0xD0,0xF9, // wait_find_FE
+    0xAD,0x12,0xD0, 0xC9,0xFE, 0xF0,0xF9, // wait_pass_FE
+    0xC6,0xFC, 0xD0,0xEE,                  // DEC $FC; BNE wait_find_FE
+    // Advance frame and loop
+    0xE6,0xFB, 0xA5,0xFB, 0xC9,n,         // INC $FB; LDA $FB; CMP #n
+    0xD0,0x04,                             // BNE → JMP show_frame
+    0xA9,0x00, 0x85,0xFB,                  // reset frame_idx=0
+    0x4C,showFrameAbs&0xFF,(showFrameAbs>>8)&0xFF // JMP show_frame
+  ];
+
+  // Frame address table (2 bytes lo/hi per frame)
+  const table = [];
+  for (let i = 0; i < n; i++) {
+    table.push(frameAddrs[i] & 0xFF);
+    table.push((frameAddrs[i] >> 8) & 0xFF);
   }
+
+  // Total file size: load until end of last frame
+  const fileSize = 2 + (frameAddrs[n-1] + 10000 - 0x0801);
+  const prg = new Uint8Array(fileSize);
+  prg[0] = 0x01; prg[1] = 0x08; // load address $0801
+  // BASIC stub: 10 SYS 2061  (=$080D)
+  prg.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
+  // Machine code at $080D
+  prg.set(asm, 2 + (0x080D - 0x0801));
+  // Frame table at $0900
+  prg.set(table, 2 + (tableAddr - 0x0801));
+  // Frame data — rearrange to match what the machine code expects:
+  //   machine code reads: bitmap from [+0], screen from [+8000], color from [+9000]
+  //   but ESP32 raw buffer has: bitmap [0..7999], screen [8192..9191], color [9216+]
+  //   (confirmed by the single-frame PRG save and the web viewer both using 8192/9216)
+  for (let i = 0; i < n; i++) {
+    const off = 2 + (frameAddrs[i] - 0x0801);
+    const f = frames[i];
+    const frameData = new Uint8Array(10000); // zero-initialised
+    // Bitmap (8000 bytes) — same offset in both
+    frameData.set(f.subarray(0, 8000), 0);
+    // Screen RAM (1000 bytes) — from rawBmp[8192], stored at +8000
+    if (f.length > 8192) frameData.set(f.subarray(8192, Math.min(9192, f.length)), 8000);
+    // Color RAM (1000 bytes) — from rawBmp[9216], stored at +9000
+    if (f.length > 9216) frameData.set(f.subarray(9216, Math.min(10216, f.length)), 9000);
+    prg.set(frameData, off);
+  }
+  return prg;
+}
+
+async function createSlideshow(type) {
+  const frames = screenshots.filter(s => s.bmpData).map(s => s.bmpData);
+  if (frames.length === 0) {
+    alert('No captured frames with binary data.\nUse the CAPTURE button to save frames first.');
+    return;
+  }
+  const bg = currentBgColor || 0;
+  try {
+    if (type === 'PRG') {
+      if (frames.length > MAX_PRG_FRAMES)
+        alert(`PRG slideshow: using first ${MAX_PRG_FRAMES} of ${frames.length} frames (64KB limit).`);
+      const prg = buildSlideshowPRG(frames, bg);
+      download(prg, 'slideshow.prg');
+    } else if (type === 'CRT') {
+      // For CRT: embed the slideshow PRG inside an EasyFlash cartridge
+      // This allows running from a cart without disk and supports the same frames
+      const usedFrames = frames.slice(0, MAX_PRG_FRAMES);
+      if (frames.length > MAX_PRG_FRAMES)
+        alert(`CRT slideshow: using first ${MAX_PRG_FRAMES} frames.`);
+      const prg = buildSlideshowPRG(usedFrames, bg);
+      const crtData = wrapPRGinCRT(prg);
+      download(crtData, 'slideshow.crt');
+    }
+  } catch(e) {
+    alert('Slideshow generation failed: ' + e.message);
+    console.error(e);
+  }
+}
+
+// Wraps a PRG in an EasyFlash CRT using the existing loader boot code
+function wrapPRGinCRT(prg) {
+  const pbL = prg.subarray(2); // strip 2-byte load address
+  const nB = Math.ceil(pbL.length / 8192);
+  const nB1 = nB + 1;
+  const h = new Uint8Array(64);
+  h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0);
+  h[0x13]=0x40; h[0x14]=0x01; h[0x15]=0x00; h[0x17]=0x20; h[0x18]=0x01; h[0x19]=0x00;
+  h.set(new TextEncoder().encode('SLIDESHW').subarray(0,32), 0x20);
+  const mk = (b,a,t,d) => {
+    const p = new Uint8Array(16+8192).fill(0xFF);
+    p.set([0x43,0x48,0x49,0x50,0,0,0x20,0x10,0,t,(b>>8),(b&0xFF),(a>>8),(a&0xFF),0x20,0],0);
+    p.set(d.subarray(0,8192),16); return p;
+  };
+  const boot = new Uint8Array(8192).fill(0xFF);
+  boot.set([
+    0x78,0xD8,0xA2,0xFF,0x9A,0xA9,0x37,0x85,0x01,0xA2,0x47,0xBD,0x17,0xE0,0x9D,0x00,
+    0x02,0xCA,0x10,0xF7,0x4C,0x00,0x02,0xA9,0x06,0x8D,0x02,0xDE,0xA9,0x01,0x85,0xFD,
+    0xA9,0x01,0x85,0xFB,0xA9,0x08,0x85,0xFC,0xA5,0xFD,0x8D,0x00,0xDE,0xA9,0x00,0x85,
+    0xFE,0xA9,0x80,0x85,0xFF,0xA9,0x20,0x8D,0x00,0x03,0xA0,0x00,0xB1,0xFE,0x91,0xFB,
+    0xC8,0xD0,0xF9,0xE6,0xFC,0xE6,0xFF,0xCE,0x00,0x03,0xD0,0xEE,0xE6,0xFD,0xA5,0xFD,
+    0xC9,nB1,0xD0,0xD4,0xA9,0x04,0x8D,0x02,0xDE,0x8D,0xFF,0xDF,0x4C,0x0D,0x08
+  ], 0);
+  boot.set([0x00,0xE0,0x00,0xE0,0x01,0xE0], 8186);
+  const crt = [h, mk(0,0xA000,2,boot)];
+  for (let b = 0; b < nB; b++) crt.push(mk(b+1,0x8000,2,pbL.subarray(b*8192,(b+1)*8192)));
+  const total = crt.reduce((a,v)=>a+v.length,0);
+  const out = new Uint8Array(total); let off=0;
+  for (const c of crt) { out.set(c,off); off+=c.length; }
+  return out;
 }
 
 async function convertScreenshotToC64Bitmap(screenshot, frameIndex) {
