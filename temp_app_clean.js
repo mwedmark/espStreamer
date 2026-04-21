@@ -1,4 +1,4 @@
-// ESPStreamer Frontend Logic - VERSION 8.4 (Syntax Hardened)
+﻿// ESPStreamer Frontend Logic - VERSION 8.4 (Syntax Hardened)
 let currentClientMode = 'mc_gray', isHires = false, isFLI = false, isIFLI = false, currentBgColor = 0;
 let running = true, usePCBackend = true, screenshots = [];
 let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 0;
@@ -188,12 +188,11 @@ function frameSizeForMode(mode) {
   return mode.includes('ifli') ? 34000 : (mode.includes('fli') ? 17000 : 10000);
 }
 // PRG slideshow: frames at $4000, $6710, $8E20 (max 3 frames)
-// Bitmap copy writes to $2000-$3F3F — any frame below $4000 gets overwritten!
+// Bitmap copy writes to $2000-$3F3F ΓÇö any frame below $4000 gets overwritten!
 // With $0001=$36 (BASIC ROM off), $A000-$BFFF is accessible RAM.
 // Frame 2 ($8E20-$B52F) crosses into that area safely.
-// Frame 3 would start at $B530 and end at $DC3F, crossing I/O at $D000 — not safe.
+// Frame 3 would start at $B530 and end at $DC3F, crossing I/O at $D000 ΓÇö not safe.
 const MAX_PRG_FRAMES = 3;
-const MAX_CRT_FRAMES = 63;
 function prgSlideshowSize(nFrames) {
   nFrames = Math.min(nFrames, MAX_PRG_FRAMES);
   const frameBase = [0x4000, 0x6710, 0x8E20];
@@ -469,7 +468,7 @@ async function save(t) {
 // ==========================================================
 function buildSlideshowPRG(frames, bgColor) {
   const n = Math.min(frames.length, MAX_PRG_FRAMES);
-  // Frame storage starts at $4000 — safely above bitmap copy dest ($2000-$3F3F)
+  // Frame storage starts at $4000 ΓÇö safely above bitmap copy dest ($2000-$3F3F)
   const frameAddrs = [0x4000, 0x6710, 0x8E20];
   const tableAddr  = 0x0900;
   const showFrameAbs = 0x082D; // $080D + 32 bytes of init code
@@ -488,9 +487,9 @@ function buildSlideshowPRG(frames, bgColor) {
     0xA9,0x00, 0x85,0xFB,              // LDA #0, STA $FB (frame_idx)
     // show_frame: (offset 32 = $082D)
     0xA5,0xFB, 0x0A, 0xAA,            // LDA $FB; ASL; TAX
-    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFD, // LDA tbl,X → src_lo
+    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFD, // LDA tbl,X ΓåÆ src_lo
     0xE8,
-    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFE, // LDA tbl,X → src_hi
+    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFE, // LDA tbl,X ΓåÆ src_hi
     // Copy bitmap: dest=$2000, 31 pages + 64 bytes
     0xA9,0x00,0x85,0x02, 0xA9,0x20,0x85,0x03, // dest=$2000
     0xA2,0x1F, 0xA0,0x00,              // LDX #31, LDY #0
@@ -518,7 +517,7 @@ function buildSlideshowPRG(frames, bgColor) {
     0xC6,0xFC, 0xD0,0xEE,                  // DEC $FC; BNE wait_find_FE
     // Advance frame and loop
     0xE6,0xFB, 0xA5,0xFB, 0xC9,n,         // INC $FB; LDA $FB; CMP #n
-    0xD0,0x04,                             // BNE → JMP show_frame
+    0xD0,0x04,                             // BNE ΓåÆ JMP show_frame
     0xA9,0x00, 0x85,0xFB,                  // reset frame_idx=0
     0x4C,showFrameAbs&0xFF,(showFrameAbs>>8)&0xFF // JMP show_frame
   ];
@@ -540,7 +539,7 @@ function buildSlideshowPRG(frames, bgColor) {
   prg.set(asm, 2 + (0x080D - 0x0801));
   // Frame table at $0900
   prg.set(table, 2 + (tableAddr - 0x0801));
-  // Frame data — rearrange to match what the machine code expects:
+  // Frame data ΓÇö rearrange to match what the machine code expects:
   //   machine code reads: bitmap from [+0], screen from [+8000], color from [+9000]
   //   but ESP32 raw buffer has: bitmap [0..7999], screen [8192..9191], color [9216+]
   //   (confirmed by the single-frame PRG save and the web viewer both using 8192/9216)
@@ -548,11 +547,11 @@ function buildSlideshowPRG(frames, bgColor) {
     const off = 2 + (frameAddrs[i] - 0x0801);
     const f = frames[i];
     const frameData = new Uint8Array(10000); // zero-initialised
-    // Bitmap (8000 bytes) — same offset in both
+    // Bitmap (8000 bytes) ΓÇö same offset in both
     frameData.set(f.subarray(0, 8000), 0);
-    // Screen RAM (1000 bytes) — from rawBmp[8192], stored at +8000
+    // Screen RAM (1000 bytes) ΓÇö from rawBmp[8192], stored at +8000
     if (f.length > 8192) frameData.set(f.subarray(8192, Math.min(9192, f.length)), 8000);
-    // Color RAM (1000 bytes) — from rawBmp[9216], stored at +9000
+    // Color RAM (1000 bytes) ΓÇö from rawBmp[9216], stored at +9000
     if (f.length > 9216) frameData.set(f.subarray(9216, Math.min(10216, f.length)), 9000);
     prg.set(frameData, off);
   }
@@ -588,53 +587,252 @@ async function createSlideshow(type) {
   }
 }
 
-// Creates a 1MB EasyFlash CRT slideshow mapping 1 frame per bank
-function buildSlideshowCRT(frames, bg) {
-  const n = Math.min(frames.length, MAX_CRT_FRAMES);
-  
+// Wraps a PRG in an EasyFlash CRT using the existing loader boot code
+function wrapPRGinCRT(prg) {
+  const pbL = prg.subarray(2); // strip 2-byte load address
+  const nB = Math.ceil(pbL.length / 8192);
+  const nB1 = nB + 1;
   const h = new Uint8Array(64);
   h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0);
   h[0x13]=0x40; h[0x14]=0x01; h[0x15]=0x00; h[0x17]=0x20; h[0x18]=0x01; h[0x19]=0x00;
   h.set(new TextEncoder().encode('SLIDESHW').subarray(0,32), 0x20);
-  
   const mk = (b,a,t,d) => {
     const p = new Uint8Array(16+8192).fill(0xFF);
     p.set([0x43,0x48,0x49,0x50,0,0,0x20,0x10,0,t,(b>>8),(b&0xFF),(a>>8),(a&0xFF),0x20,0],0);
     p.set(d.subarray(0,8192),16); return p;
   };
-  
   const boot = new Uint8Array(8192).fill(0xFF);
   boot.set([
-    0x78, 0xD8, 0xA2, 0xFF, 0x9A, 0xA2, 0x00, 
-    0xBD, 0x11, 0xE0, 0x9D, 0x00, 0x02, 0xE8, 0xE0, 0xC6, 0xD0, 0xF5, 0x4C, 0x00, 0x02,
-    0xA9, 0x05, 0x8D, 0x02, 0xDE, 0xA9, 0x3B, 0x8D, 0x11, 0xD0, 0xA9, 0xD8, 0x8D, 0x16, 0xD0, 
-    0xA9, 0x18, 0x8D, 0x18, 0xD0, 0xA9, 0x36, 0x85, 0x01, 0xA9, bg & 0xFF, 0x8D, 0x20, 0xD0, 
-    0x8D, 0x21, 0xD0, 0xA9, 0x01, 0x85, 0x02, 0xA5, 0x02, 0x8D, 0x00, 0xDE, 0xA9, 0x00, 0x85, 
-    0xFD, 0x85, 0xFB, 0xA9, 0x80, 0x85, 0xFE, 0xA9, 0x20, 0x85, 0xFC, 0xA2, 0x20, 0xA0, 0x00, 
-    0xB1, 0xFD, 0x91, 0xFB, 0xC8, 0xD0, 0xF9, 0xE6, 0xFE, 0xE6, 0xFC, 0xCA, 0xD0, 0xF2, 0xA9, 
-    0x00, 0x85, 0xFD, 0x85, 0xFB, 0xA9, 0xA0, 0x85, 0xFE, 0xA9, 0x04, 0x85, 0xFC, 0xA2, 0x03, 
-    0xA0, 0x00, 0xB1, 0xFD, 0x91, 0xFB, 0xC8, 0xD0, 0xF9, 0xE6, 0xFE, 0xE6, 0xFC, 0xCA, 0xD0, 
-    0xF2, 0xA0, 0x00, 0xB1, 0xFD, 0x91, 0xFB, 0xC8, 0xC0, 0xE8, 0xD0, 0xF7, 0xA9, 0xE8, 0x85, 
-    0xFD, 0xA9, 0x00, 0x85, 0xFB, 0xA9, 0xA3, 0x85, 0xFE, 0xA9, 0xD8, 0x85, 0xFC, 0xA2, 0x03, 
-    0xA0, 0x00, 0xB1, 0xFD, 0x91, 0xFB, 0xC8, 0xD0, 0xF9, 0xE6, 0xFE, 0xE6, 0xFC, 0xCA, 0xD0, 
-    0xF2, 0xA0, 0x00, 0xB1, 0xFD, 0x91, 0xFB, 0xC8, 0xC0, 0xE8, 0xD0, 0xF7, 0xA9, 0x64, 0x85, 
-    0x03, 0xAD, 0x12, 0xD0, 0xC9, 0xFE, 0xD0, 0xF9, 0xAD, 0x12, 0xD0, 0xC9, 0xFE, 0xF0, 0xF9, 
-    0xC6, 0x03, 0xD0, 0xEE, 0xE6, 0x02, 0xA5, 0x02, 0xC9, n + 1, 0xD0, 0x04, 0xA9, 0x01, 0x85, 
-    0x02, 0x4C, 0x24, 0x02
+    0x78,0xD8,0xA2,0xFF,0x9A,0xA9,0x37,0x85,0x01,0xA2,0x47,0xBD,0x17,0xE0,0x9D,0x00,
+    0x02,0xCA,0x10,0xF7,0x4C,0x00,0x02,0xA9,0x06,0x8D,0x02,0xDE,0xA9,0x01,0x85,0xFD,
+    0xA9,0x01,0x85,0xFB,0xA9,0x08,0x85,0xFC,0xA5,0xFD,0x8D,0x00,0xDE,0xA9,0x00,0x85,
+    0xFE,0xA9,0x80,0x85,0xFF,0xA9,0x20,0x8D,0x00,0x03,0xA0,0x00,0xB1,0xFE,0x91,0xFB,
+    0xC8,0xD0,0xF9,0xE6,0xFC,0xE6,0xFF,0xCE,0x00,0x03,0xD0,0xEE,0xE6,0xFD,0xA5,0xFD,
+    0xC9,nB1,0xD0,0xD4,0xA9,0x04,0x8D,0x02,0xDE,0x8D,0xFF,0xDF,0x4C,0x0D,0x08
   ], 0);
-  boot.set([0x00,0xE0,0x00,0xE0,0x01,0xE0], 8186); // NMI, Reset, IRQ vectors
-  
+  boot.set([0x00,0xE0,0x00,0xE0,0x01,0xE0], 8186);
   const crt = [h, mk(0,0xA000,2,boot)];
-  
-  for (let i = 0; i < n; i++) {
-    const fData = frames[i];
-    crt.push(mk(i+1, 0x8000, 2, fData.subarray(0, 8192)));
-    crt.push(mk(i+1, 0xA000, 2, fData.subarray(8192, 10000)));
-  }
-  
+  for (let b = 0; b < nB; b++) crt.push(mk(b+1,0x8000,2,pbL.subarray(b*8192,(b+1)*8192)));
   const total = crt.reduce((a,v)=>a+v.length,0);
   const out = new Uint8Array(total); let off=0;
   for (const c of crt) { out.set(c,off); off+=c.length; }
   return out;
 }
 
+async function convertScreenshotToC64Bitmap(screenshot, frameIndex) {
+  // Convert screenshot to C64 multicolor bitmap format
+  const frameData = new Uint8Array(8192 + 1024 + 1024); // bitmap + screen + color
+  let offset = 0;
+  
+  try {
+    // Create canvas from screenshot
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    await new Promise((resolve) => {
+      img.onload = resolve;
+      img.src = screenshot.thumb;
+    });
+    
+    canvas.width = 160;
+    canvas.height = 200;
+    ctx.drawImage(img, 0, 0, 160, 200);
+    
+    // Get pixel data and convert to C64 colors
+    const imageData = ctx.getImageData(0, 0, 160, 200);
+    const pixels = imageData.data;
+    
+    // Generate bitmap data
+    for (let y = 0; y < 25; y++) {
+      for (let x = 0; x < 40; x++) {
+        // Screen RAM entry
+        frameData[8192 + y * 40 + x] = 0;
+        
+        // Color RAM entry (alternating colors for visibility)
+        frameData[9216 + y * 40 + x] = (frameIndex * 2 + x) % 16;
+        
+        // Bitmap data (8 bytes per character)
+        for (let py = 0; py < 8; py++) {
+          let byte = 0;
+          for (let px = 0; px < 4; px++) {
+            const pixelX = x * 4 + px;
+            const pixelY = y * 8 + py;
+            const pixelIndex = (pixelY * 160 + pixelX) * 4;
+            const r = pixels[pixelIndex], g = pixels[pixelIndex + 1], b = pixels[pixelIndex + 2];
+            
+            // Simple color mapping based on brightness
+            let color = 0;
+            const brightness = (r + g + b) / 3;
+            if (brightness > 200) color = 1; // White
+            else if (brightness > 150) color = 6; // Blue
+            else if (brightness > 100) color = 8; // Orange
+            else if (brightness > 50) color = 12; // Medium gray
+            else color = 0; // Black
+            
+            byte |= (color & 3) << ((3 - px) * 2);
+          }
+          frameData[x * 8 + py + y * 320] = byte;
+        }
+      }
+    }
+    
+  } catch (error) {
+    void 0;
+    // Create simple test pattern as fallback
+    for (let i = 0; i < 8192; i++) {
+      frameData[i] = (frameIndex + 1) % 16 * 17;
+    }
+    for (let i = 8192; i < 10240; i++) {
+      frameData[i] = frameIndex % 16;
+    }
+    for (let i = 10240; i < 11264; i++) {
+      frameData[i] = (frameIndex * 3) % 16;
+    }
+  }
+  
+  return frameData;
+}
+
+async function convertScreenshotToC64(screenshot, frameIndex) {
+  // Convert captured screenshot to proper C64 bitmap format
+  const frameSize = isIFLI ? 49155 : (isFLI ? 32768 : 14145);
+  const frameData = new Uint8Array(frameSize);
+  
+  try {
+    // Create canvas from screenshot thumbnail
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    await new Promise((resolve) => {
+      img.onload = resolve;
+      img.src = screenshot.thumb;
+    });
+    
+    canvas.width = isHires ? 320 : 160;
+    canvas.height = 200;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    
+    // Get pixel data
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+    
+    // Convert to C64 format using the same logic as the engine
+    const cb = new Uint8Array(320 * 200);
+    for (let y = 0; y < 200; y++) {
+      for (let x = 0; x < (isHires ? 320 : 160); x++) {
+        const i = (y * (isHires ? 320 : 160) + x) * 4;
+        const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+        let best = 0, bestDist = 999999;
+        for (let c = 0; c < 16; c++) {
+          const pal = c64Pal[c];
+          const dist = ((r - pal[0]) * (r - pal[0]) * 2) + ((g - pal[1]) * (g - pal[1]) * 4) + ((b - pal[2]) * (b - pal[2]));
+          if (dist < bestDist) { bestDist = dist; best = c; }
+        }
+        cb[y * (isHires ? 320 : 160) + x] = best;
+      }
+    }
+    
+    // Generate C64 bitmap data (simplified version)
+    let offset = 0;
+    const bgC = 0; // Black background
+    
+    if (isHires) {
+      // Hires mode: 8KB bitmap + 1KB color RAM
+      for (let cy = 0; cy < 25; cy++) {
+        for (let cx = 0; cx < 40; cx++) {
+          // Color RAM
+          frameData[8192 + cy * 40 + cx] = 6; // Blue
+          
+          // Bitmap data
+          for (let py = 0; py < 8; py++) {
+            let byte = 0;
+            for (let px = 0; px < 8; px++) {
+              if (cb[(cy * 8 + py) * 320 + (cx * 8 + px)] !== bgC) {
+                byte |= (1 << (7 - px));
+              }
+            }
+            frameData[cx * 8 + py] = byte;
+          }
+        }
+      }
+    } else {
+      // Multicolor mode
+      for (let cy = 0; cy < 25; cy++) {
+        for (let cx = 0; cx < 40; cx++) {
+          // Screen RAM
+          frameData[8192 + cy * 40 + cx] = 0;
+          // Color RAM  
+          frameData[9216 + cy * 40 + cx] = 6;
+          
+          // Bitmap data
+          for (let py = 0; py < 8; py++) {
+            let byte = 0;
+            for (let px = 0; px < 4; px++) {
+              const color = cb[(cy * 8 + py) * 160 + (cx * 4 + px)];
+              byte |= (color & 3) << ((3 - px) * 2);
+            }
+            frameData[cx * 8 + py] = byte;
+          }
+        }
+      }
+    }
+    
+    // Add background color at end
+    frameData[frameSize - 1] = bgC;
+    
+  } catch (error) {
+    void 0;
+    // Fallback: create a simple test pattern
+    for (let i = 0; i < frameSize; i++) {
+      frameData[i] = (frameIndex + 1) % 16;
+    }
+  }
+  
+  return frameData;
+}
+
+async function upd() {
+  try {
+    const srP = apiFetch('/stats?t=' + Date.now()), rP = apiFetch('/data?t=' + Date.now()); const [sr, r] = await Promise.all([srP, rP]);
+    if (sr && sr.ok) {
+      const s = await sr.json(); if (s.mode && s.mode !== currentClientMode) { currentClientMode = s.mode; updateModeUI(); }
+      const now = Date.now(); if (lastStatsTime > 0) { const dt = (now - lastStatsTime) / 1000; if (dt >= 1) { currentFPS = ((s.frames - lastFrames) / dt).toFixed(1); currentKBs = ((s.totalKB - lastKB) / dt).toFixed(1); lastStatsTime = now; lastFrames = s.frames; lastKB = s.totalKB; } } else { lastStatsTime = now; lastFrames = s.frames; lastKB = s.totalKB; }
+      currentBgColor = s.bg; let dotE = document.getElementById('dot'); if (dotE) dotE.className = s.connected ? 'dot on' : 'dot';
+      let stText = 'Status: ' + (s.connected ? 'LIVE' : 'DISCONNECTED') + ' | FPS: ' + Math.max(0, currentFPS) + ' | ' + Math.max(0, currentKBs) + ' KB/s';
+      let stE = document.getElementById('stxt'); if (stE) stE.innerHTML = stText;
+      if (document.getElementById('contrast') && document.activeElement !== document.getElementById('contrast')) { document.getElementById('contrast').value = s.contrast; updateContrastText(); }
+      if (document.getElementById('brightness') && document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
+      if (document.getElementById('dither') && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
+      if (document.getElementById('ditherType') && document.activeElement !== document.getElementById('ditherType')) { document.getElementById('ditherType').value = s.ditherType; }
+      if (document.getElementById('scaling') && document.activeElement !== document.getElementById('scaling')) { document.getElementById('scaling').value = s.scaling; document.getElementById('c').setAttribute('data-scale', s.scaling); }
+    }
+    if (r && r.ok) {
+      const d = new Uint8Array(await r.arrayBuffer()); 
+      const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+      if (isIFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[32767]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, bA = d[cI * 8 + py], sA = d[8192 + sB + cI], cA = d[15360 + cI], clA = [bg, c64Pal[sA >> 4], c64Pal[sA & 15], c64Pal[cA & 15]], bB = d[16384 + cI * 8 + py], sB2 = d[16384 + 8192 + sB + cI], cB = d[16384 + 15360 + cI], clB = [bg, c64Pal[sB2 >> 4], c64Pal[sB2 & 15], c64Pal[cB & 15]]; for (let px = 0; px < 4; px++) { let coA = clA[(bA >> ((3 - px) * 2)) & 3], coB = clB[(bB >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = (coA[0] + coB[0]) >> 1; img.data[o + 1] = (coA[1] + coB[1]) >> 1; img.data[o + 2] = (coA[2] + coB[2]) >> 1; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
+      else if (isFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[16383]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let row = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = row * 40 + x, byte = d[cI * 8 + py], sBy = d[8192 + sB + cI], cBy = d[15360 + cI], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
+      else if (isHires) { const img = ctx.createImageData(320, 200); for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, byte = d[cI * 8 + py], sBy = d[8192 + cI], fg = c64Pal[sBy >> 4], bg = c64Pal[sBy & 15]; for (let bit = 7; bit >= 0; bit--) { let px = x * 8 + (7 - bit), isF = (byte >> bit) & 1, c = isF ? fg : bg, o = (y * 320 + px) * 4; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
+      else { const img = ctx.createImageData(160, 200), bg = c64Pal[currentBgColor]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cellIdx = cR * 40 + x, byte = d[cellIdx * 8 + py], sBy = d[8192 + cellIdx], cBy = d[9216 + cellIdx], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
+    }  } catch (e) { }
+  if (running) setTimeout(upd, 70);
+}
+setBackendMode('pc'); updateModeUI(); updateButtonStates(); upd();
+
+// Add fullscreen double-click handler for canvas wrapper
+document.getElementById('c-wrap').addEventListener('dblclick', function() {
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    if (this.requestFullscreen) {
+      this.requestFullscreen().catch(e => void 0);
+    } else if (this.webkitRequestFullscreen) {
+      this.webkitRequestFullscreen();
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  }
+});

@@ -188,10 +188,10 @@ function frameSizeForMode(mode) {
   return mode.includes('ifli') ? 34000 : (mode.includes('fli') ? 17000 : 10000);
 }
 // PRG slideshow: frames at $4000, $6710, $8E20 (max 3 frames)
-// Bitmap copy writes to $2000-$3F3F — any frame below $4000 gets overwritten!
+// Bitmap copy writes to $2000-$3F3F ΓÇö any frame below $4000 gets overwritten!
 // With $0001=$36 (BASIC ROM off), $A000-$BFFF is accessible RAM.
 // Frame 2 ($8E20-$B52F) crosses into that area safely.
-// Frame 3 would start at $B530 and end at $DC3F, crossing I/O at $D000 — not safe.
+// Frame 3 would start at $B530 and end at $DC3F, crossing I/O at $D000 ΓÇö not safe.
 const MAX_PRG_FRAMES = 3;
 const MAX_CRT_FRAMES = 63;
 function prgSlideshowSize(nFrames) {
@@ -469,7 +469,7 @@ async function save(t) {
 // ==========================================================
 function buildSlideshowPRG(frames, bgColor) {
   const n = Math.min(frames.length, MAX_PRG_FRAMES);
-  // Frame storage starts at $4000 — safely above bitmap copy dest ($2000-$3F3F)
+  // Frame storage starts at $4000 ΓÇö safely above bitmap copy dest ($2000-$3F3F)
   const frameAddrs = [0x4000, 0x6710, 0x8E20];
   const tableAddr  = 0x0900;
   const showFrameAbs = 0x082D; // $080D + 32 bytes of init code
@@ -488,9 +488,9 @@ function buildSlideshowPRG(frames, bgColor) {
     0xA9,0x00, 0x85,0xFB,              // LDA #0, STA $FB (frame_idx)
     // show_frame: (offset 32 = $082D)
     0xA5,0xFB, 0x0A, 0xAA,            // LDA $FB; ASL; TAX
-    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFD, // LDA tbl,X → src_lo
+    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFD, // LDA tbl,X ΓåÆ src_lo
     0xE8,
-    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFE, // LDA tbl,X → src_hi
+    0xBD,tableAddr&0xFF,(tableAddr>>8)&0xFF, 0x85,0xFE, // LDA tbl,X ΓåÆ src_hi
     // Copy bitmap: dest=$2000, 31 pages + 64 bytes
     0xA9,0x00,0x85,0x02, 0xA9,0x20,0x85,0x03, // dest=$2000
     0xA2,0x1F, 0xA0,0x00,              // LDX #31, LDY #0
@@ -518,7 +518,7 @@ function buildSlideshowPRG(frames, bgColor) {
     0xC6,0xFC, 0xD0,0xEE,                  // DEC $FC; BNE wait_find_FE
     // Advance frame and loop
     0xE6,0xFB, 0xA5,0xFB, 0xC9,n,         // INC $FB; LDA $FB; CMP #n
-    0xD0,0x04,                             // BNE → JMP show_frame
+    0xD0,0x04,                             // BNE ΓåÆ JMP show_frame
     0xA9,0x00, 0x85,0xFB,                  // reset frame_idx=0
     0x4C,showFrameAbs&0xFF,(showFrameAbs>>8)&0xFF // JMP show_frame
   ];
@@ -540,7 +540,7 @@ function buildSlideshowPRG(frames, bgColor) {
   prg.set(asm, 2 + (0x080D - 0x0801));
   // Frame table at $0900
   prg.set(table, 2 + (tableAddr - 0x0801));
-  // Frame data — rearrange to match what the machine code expects:
+  // Frame data ΓÇö rearrange to match what the machine code expects:
   //   machine code reads: bitmap from [+0], screen from [+8000], color from [+9000]
   //   but ESP32 raw buffer has: bitmap [0..7999], screen [8192..9191], color [9216+]
   //   (confirmed by the single-frame PRG save and the web viewer both using 8192/9216)
@@ -548,11 +548,11 @@ function buildSlideshowPRG(frames, bgColor) {
     const off = 2 + (frameAddrs[i] - 0x0801);
     const f = frames[i];
     const frameData = new Uint8Array(10000); // zero-initialised
-    // Bitmap (8000 bytes) — same offset in both
+    // Bitmap (8000 bytes) ΓÇö same offset in both
     frameData.set(f.subarray(0, 8000), 0);
-    // Screen RAM (1000 bytes) — from rawBmp[8192], stored at +8000
+    // Screen RAM (1000 bytes) ΓÇö from rawBmp[8192], stored at +8000
     if (f.length > 8192) frameData.set(f.subarray(8192, Math.min(9192, f.length)), 8000);
-    // Color RAM (1000 bytes) — from rawBmp[9216], stored at +9000
+    // Color RAM (1000 bytes) ΓÇö from rawBmp[9216], stored at +9000
     if (f.length > 9216) frameData.set(f.subarray(9216, Math.min(10216, f.length)), 9000);
     prg.set(frameData, off);
   }
