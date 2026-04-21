@@ -33,7 +33,7 @@ function updateDitherText() { document.getElementById('dval').innerText = docume
 function sendDither() { apiFetch('/setdither?d=' + document.getElementById('dither').value); }
 function sendDitherType() { apiFetch('/setdithertype?t=' + document.getElementById('ditherType').value); sendDither(); }
 function sendBg() { const e = document.getElementById('bgcolor'); if (e) apiFetch('/setbg?c=' + e.value); }
-function sendScaling() { const e = document.getElementById('scaling'); if (e) apiFetch('/setscaling?s=' + e.value); }
+function sendScaling() { const e = document.getElementById('scaling'); if (e) { apiFetch('/setscaling?s=' + e.value); document.getElementById('c').setAttribute('data-scale', e.value); } }
 function sendPalette() { apiFetch('/setpalette?p=' + document.getElementById('pal-sel').value); }
 function download(d, n) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d])); a.download = n; a.click(); }
 
@@ -47,7 +47,7 @@ async function connectKungFuFlash() {
     kungFuWebSocket = new WebSocket(`ws://localhost:${port}`);
     
     kungFuWebSocket.onopen = function() {
-      console.log(`Connected to ${serverName} server`);
+      void 0;
       kungFuConnected = true;
       updateKungFuStatus('Connected', true);
       
@@ -61,18 +61,18 @@ async function connectKungFuFlash() {
     };
     
     kungFuWebSocket.onclose = function() {
-      console.log(`Disconnected from ${serverName} server`);
+      void 0;
       kungFuConnected = false;
       updateKungFuStatus('Disconnected', false);
     };
     
     kungFuWebSocket.onerror = function(error) {
-      console.error(`${serverName} WebSocket error:`, error);
+      void 0;
       updateKungFuStatus('Error', false);
     };
     
   } catch (error) {
-    console.error('Failed to connect to Kung Fu Flash:', error);
+    void 0;
     updateKungFuStatus('Connection Failed', false);
   }
 }
@@ -147,7 +147,7 @@ async function streamToC64() {
     updateKungFuStatus('Streaming...', true);
     
   } catch (error) {
-    console.error('Stream to C64 failed:', error);
+    void 0;
     updateKungFuStatus('Stream Failed', false);
   }
 }
@@ -168,7 +168,7 @@ function testInjection() {
     updateKungFuStatus('Testing injection...', true);
     
   } catch (error) {
-    console.error('Test injection failed:', error);
+    void 0;
     updateKungFuStatus('Test Failed', false);
   }
 }
@@ -251,15 +251,15 @@ async function captureImage() {
     screenshots.push({ thumb, bmpData, timestamp, mode: currentClientMode, isHires, isFLI, isIFLI });
     document.getElementById('screenshot-count').textContent = screenshots.length;
     updateButtonStates();
-    console.log(`Frame ${screenshots.length} captured, ${bmpData.length} bytes`);
+    void 0;
   } catch(e) {
-    console.error('Capture error:', e);
+    void 0;
     alert('Capture failed: ' + e.message);
   }
 }
 
 function viewScreenshots() {
-  console.log('VIEW button clicked, screenshots:', screenshots.length);
+  void 0;
   
   if (screenshots.length === 0) {
     alert('No screenshots captured yet. Click the CAPTURE button to save frames.');
@@ -278,7 +278,7 @@ function viewScreenshots() {
     const isIFLI = shot.isIFLI || currentClientMode.includes('ifli') || false;
     const timestamp = shot.timestamp || 'Unknown time';
     
-    console.log(`Screenshot ${index}:`, shot);
+    void 0;
     
     html += `
       <div style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px;">
@@ -303,16 +303,16 @@ function viewScreenshots() {
     <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding: 10px 20px; background: #404080; border: none; border-radius: 8px; color: white; cursor: pointer;">Close</button>
   </div></div>`;
   
-  console.log('Creating modal with HTML...');
+  void 0;
   const modal = document.createElement('div');
   modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000;';
   modal.innerHTML = html;
   document.body.appendChild(modal);
-  console.log('Modal added to page');
+  void 0;
 }
 
 function downloadScreenshot(index) {
-  console.log(`Downloading screenshot ${index}`);
+  void 0;
   const shot = screenshots[index];
   
   // Handle both simplified and full capture data
@@ -326,7 +326,7 @@ function downloadScreenshot(index) {
   a.download = `c64_capture_${index + 1}_${mode}_${timestamp.replace(/:/g, '-')}.png`;
   a.click();
   
-  console.log(`Downloaded: ${a.download}`);
+  void 0;
 }
 
 function deleteScreenshot(index) {
@@ -583,7 +583,7 @@ async function createSlideshow(type) {
     }
   } catch(e) {
     alert('Slideshow generation failed: ' + e.message);
-    console.error(e);
+    void 0;
   }
 }
 
@@ -678,7 +678,7 @@ async function convertScreenshotToC64Bitmap(screenshot, frameIndex) {
     }
     
   } catch (error) {
-    console.error('Error converting screenshot:', error);
+    void 0;
     // Create simple test pattern as fallback
     for (let i = 0; i < 8192; i++) {
       frameData[i] = (frameIndex + 1) % 16 * 17;
@@ -783,7 +783,7 @@ async function convertScreenshotToC64(screenshot, frameIndex) {
     frameData[frameSize - 1] = bgC;
     
   } catch (error) {
-    console.error('Error converting screenshot:', error);
+    void 0;
     // Fallback: create a simple test pattern
     for (let i = 0; i < frameSize; i++) {
       frameData[i] = (frameIndex + 1) % 16;
@@ -806,17 +806,33 @@ async function upd() {
       if (document.getElementById('brightness') && document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
       if (document.getElementById('dither') && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
       if (document.getElementById('ditherType') && document.activeElement !== document.getElementById('ditherType')) { document.getElementById('ditherType').value = s.ditherType; }
+      if (document.getElementById('scaling') && document.activeElement !== document.getElementById('scaling')) { document.getElementById('scaling').value = s.scaling; document.getElementById('c').setAttribute('data-scale', s.scaling); }
     }
     if (r && r.ok) {
       const d = new Uint8Array(await r.arrayBuffer()); 
-      console.log(`Received data buffer: ${d.length} bytes, first 10:`, d.slice(0, 10));
       const cv = document.getElementById('c'), ctx = cv.getContext('2d');
       if (isIFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[32767]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, bA = d[cI * 8 + py], sA = d[8192 + sB + cI], cA = d[15360 + cI], clA = [bg, c64Pal[sA >> 4], c64Pal[sA & 15], c64Pal[cA & 15]], bB = d[16384 + cI * 8 + py], sB2 = d[16384 + 8192 + sB + cI], cB = d[16384 + 15360 + cI], clB = [bg, c64Pal[sB2 >> 4], c64Pal[sB2 & 15], c64Pal[cB & 15]]; for (let px = 0; px < 4; px++) { let coA = clA[(bA >> ((3 - px) * 2)) & 3], coB = clB[(bB >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = (coA[0] + coB[0]) >> 1; img.data[o + 1] = (coA[1] + coB[1]) >> 1; img.data[o + 2] = (coA[2] + coB[2]) >> 1; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else if (isFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[16383]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let row = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = row * 40 + x, byte = d[cI * 8 + py], sBy = d[8192 + sB + cI], cBy = d[15360 + cI], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else if (isHires) { const img = ctx.createImageData(320, 200); for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, byte = d[cI * 8 + py], sBy = d[8192 + cI], fg = c64Pal[sBy >> 4], bg = c64Pal[sBy & 15]; for (let bit = 7; bit >= 0; bit--) { let px = x * 8 + (7 - bit), isF = (byte >> bit) & 1, c = isF ? fg : bg, o = (y * 320 + px) * 4; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else { const img = ctx.createImageData(160, 200), bg = c64Pal[currentBgColor]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cellIdx = cR * 40 + x, byte = d[cellIdx * 8 + py], sBy = d[8192 + cellIdx], cBy = d[9216 + cellIdx], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
-    }
-  } catch (e) { }
+    }  } catch (e) { }
   if (running) setTimeout(upd, 70);
 }
 setBackendMode('pc'); updateModeUI(); updateButtonStates(); upd();
+
+// Add fullscreen double-click handler for canvas wrapper
+document.getElementById('c-wrap').addEventListener('dblclick', function() {
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    if (this.requestFullscreen) {
+      this.requestFullscreen().catch(e => void 0);
+    } else if (this.webkitRequestFullscreen) {
+      this.webkitRequestFullscreen();
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  }
+});

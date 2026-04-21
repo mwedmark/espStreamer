@@ -25,7 +25,7 @@ window.C64Engine = (function () {
         const db = pal.b[c1] - pal.b[c2];
         return (dr * dr * 2) + (dg * dg * 4) + (db * db);
     }
-    function log(m) { /* Disabled - use console.log instead to prevent status blinking */ console.log('C64Engine:', m); }
+    function log(m) { /* Disabled - use console.log instead to prevent status blinking */ void 0; }
     function process(idat, wT, isH, isF, isI, isG) {
         log(`process() called: ${wT}x200, H:${isH} F:${isF} I:${isI} G:${isG}`);
         const cb = preAllocated.cb; 
@@ -143,9 +143,7 @@ window.C64Engine = (function () {
         apiCall: async function (p) {
             let u = new URL(p, 'http://h'); if (p.startsWith('/data')) { 
                 let isI = currentMode.includes('ifli'), s = isI ? 32768 : 16384, r = new ArrayBuffer(s + 1); 
-                console.log(`Data API called: activeB=${activeB}, s=${s}, b.length=${b.length}`);
                 const dataToReturn = b.subarray(activeB * 32768, activeB * 32768 + s + 1);
-                console.log(`Returning ${dataToReturn.length} bytes, first 10:`, dataToReturn.slice(0, 10));
                 new Uint8Array(r).set(dataToReturn); 
                 return { ok: true, arrayBuffer: async () => r }; 
             }
