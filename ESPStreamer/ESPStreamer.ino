@@ -431,139 +431,85 @@ async function save(t) {
   }
 
   if (t === 'PRG' && !isSlideshow) { download(f, isIFLI ? 'ifli.prg' : (isFLI ? 'fli.prg' : (isHires ? 'hires.prg' : 'v.prg'))); }
-  else if (t === 'CRT') {
-    // Handling CRT Export
-    let payload;
-    let nBanks;
-
-    if (isSlideshow) {
-        // Just mirror the PRG payload to a CRT cart so it automatically runs from memory!
-        // We already built 'f' in the PRG step block, so this generates identical functionality.
-        payload = f.subarray(2);
-        nBanks = Math.ceil(payload.length / 8192);
-    } else {
-        payload = f.subarray(2); 
-        nBanks = Math.ceil(payload.length / 8192);
-    }
-
-    // EasyFlash CRT (type 32) - boots in Ultimax: ROMH at $E000, reset vec at $FFFC/$FFFD
-    // Each bank requires TWO chip packets: ROML ($8000) and ROMH ($A000 -> $E000)
-
-    // --- 64-byte CRT header ---
-    const h = new Uint8Array(64);
-    h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0x00); // "C64 CARTRIDGE   "
-    h.set([0x00,0x00,0x00,0x40], 0x10); // header length = 64, big-endian
-    h.set([0x01,0x00], 0x14);           // version 1.0
-    h.set([0x00,0x20], 0x16);           // type 32 = EasyFlash, big-endian
-    h[0x18] = 0x00;                     // EXROM asserted
-    h[0x19] = 0x00;                     // GAME asserted
-    h.set(new TextEncoder().encode("ESPSTREAMER").subarray(0,32), 0x20);
-    const crt = [h];
-
-    // --- CHIP packet builder (addr: $8000=ROML, $A000=ROMH->Ultimax $E000) ---
-    const makeChip = (bank, loadAddr, data8k) => {
-      const pkt = new Uint8Array(16 + 8192);
-      pkt.set([0x43,0x48,0x49,0x50], 0x00);                         // "CHIP"
-      pkt.set([0x00,0x00,0x20,0x10], 0x04);                         // length = 16+8192
-      pkt.set([0x00,0x00], 0x08);                                    // type = ROM
-      pkt.set([(bank>>8)&0xFF, bank&0xFF], 0x0A);                   // bank number
-      pkt.set([(loadAddr>>8)&0xFF, loadAddr&0xFF], 0x0C);           // load address
-      pkt.set([0x20,0x00], 0x0E);                                    // size = 8192
-      pkt.set(data8k, 0x10);
-      return pkt;
-    };
-
-    // --- Boot code: 2-phase EasyFlash loader ---
-    // Problem: when executing from ROMH at $E000, changing $DE00 (bank select)
-    // replaces our ROMH with the new bank's ROMH → instant crash.
-    // Solution: Phase 1 copies Phase 2 to RAM ($0200), jumps there.
-    //           Phase 2 runs from RAM and freely changes banks via $DE00.
-    //
-    // Phase 1 (ROMH at $E000, 23 bytes):
-    //   Init stack/CPU port, copy 67-byte Phase2 from ROMH[$E017] to RAM[$0200], JMP $0200
-    //
-    // Phase 2 (RAM at $0200, 67 bytes):
-    //   Loop banks 1..N: STA $DE00 (stays Ultimax) → read ROML $8000 → copy to $0801+
-    //   Write $03 to $DE02 (VICE mode reg) AND $DFFF (real-HW mode reg) → disable cart
-    //   JMP $0801
-    //
-    // Verified offsets (Python assembler):
-    //   BNE byte_loop  at P2+$25: rel=0xF9 (-7)
-    //   BNE page_loop  at P2+$2E: rel=0xEE (-18)
-    //   BNE copy_bank  at P2+$36: rel=0xD4 (-44)
-    //   BPL copy_loop  at P1+$12: rel=0xF7 (-9)
-
-    const romh = new Uint8Array(8192).fill(0xFF);
-
-    // Phase 1: 23 bytes, runs at $E000
-    // Phase 1: 23 bytes, runs at $E000
-    const phase1 = [
-      0x78,0xD8,0xA2,0xFF,0x9A, // SEI; CLD; LDX #$FF; TXS
-      0xA9,0x37,0x85,0x01,      // LDA #$37; STA $01
-      0xA2,0,                   // placeholder for LDX len
-      // copy_loop at $E00B:
-      0xBD,0x00,0xE0,           // placeholder for LDA $E0XX,X
-      0x9D,0x00,0x02,           // STA $0200,X
-      0xCA,                     // DEX
-      0x10,0xF7,                // BPL copy_loop (rel -9)
-      0x4C,0x00,0x02            // JMP $0200
-    ];
-
-    // Phase 2: Runs at $0200
-    const phase2 = [
-      0xA9,0x06,0x8D,0x02,0xDE, // LDA #$06; STA $DE02
-      0xA9,0x01,0x85,0xFD,  // LDA #1; STA $FD (bank counter)
-      0xA9,0x01,0x85,0xFB,  // LDA #1; STA $FB (dst lo $0801)
-      0xA9,0x08,0x85,0xFC,  // LDA #8; STA $FC (dst hi)
-      // copy_bank ($0211):
-      0xA5,0xFD,0x8D,0x00,0xDE, // LDA $FD; STA $DE00 (select bank)
-      0xA9,0x00,0x85,0xFE,      // LDA #0; STA $FE (src lo)
-      0xA9,0x80,0x85,0xFF,      // LDA #$80; STA $FF (src hi -> $8000)
-      0xA9,0x20,0x8D,0x00,0x03, // LDA #$20; STA $0300 (32 pages)
-      // page_loop ($0223):
-      0xA0,0x00,                // LDY #0
-      // byte_loop ($0225):
-      0xB1,0xFE,0x91,0xFB,0xC8,0xD0,0xF9, // LDA(src),Y; STA(dst),Y; INY; BNE byte_loop (rel -7)
-      0xE6,0xFC,0xE6,0xFF,      // INC $FC; INC $FF
-      0xCE,0x00,0x03,0xD0,0xEE, // DEC $0300; BNE page_loop (rel -18)
-      0xE6,0xFD,0xA5,0xFD,      // INC $FD; LDA $FD
-      0xC9,(nBanks+1),0xD0,0xD4, // CMP #nBanks+1; BNE copy_bank (rel -44)
-      // done: disable cart, JMP $080D
-      0xA9,0x04,0x8D,0x02,0xDE,0x8D,0xFF,0xDF, // LDA #4; STA $DE02; STA $DFFF
-      0x4C,0x0D,0x08            // JMP $080D
-    ];
-
-    // Update Phase 1 with actual Phase 2 length and start offset
-    phase1[10] = phase2.length - 1;
-    phase1[12] = 23; // offset $17 (23 decimal)
-
-    romh.set(phase1, 0);
-    romh.set(phase2, phase1.length);        // phase2 at ROMH offset $17 = $E017
-    romh[0x1FFA] = 0x00; romh[0x1FFB] = 0xE0; // NMI  vec -> $E000
-    romh[0x1FFC] = 0x00; romh[0x1FFD] = 0xE0; // Reset vec -> $E000
-    romh[0x1FFE] = 0x01; romh[0x1FFF] = 0xE0; // IRQ  vec -> $E001 (SEI keeps IRQs off)
-
-    // Bank 0: empty ROML + boot ROMH
-    const emptyRoml = new Uint8Array(8192).fill(0xFF);
-    const emptyRomh = new Uint8Array(8192).fill(0xFF);
-    crt.push(makeChip(0, 0x8000, emptyRoml));
-    crt.push(makeChip(0, 0xA000, romh));
-
-    // Banks 1..N: payload in ROML ($8000) + empty ROMH
-    for (let b = 0; b < nBanks; b++) {
-      const chunk = new Uint8Array(8192).fill(0xFF);
-      chunk.set(payload.subarray(b * 8192, (b + 1) * 8192));
-      crt.push(makeChip(b + 1, 0x8000, chunk));
-      crt.push(makeChip(b + 1, 0xA000, emptyRomh));
-    }
-
-    const finalSize = crt.reduce((acc, arr) => acc + arr.length, 0);
-    const combined = new Uint8Array(finalSize);
-    let off = 0;
-    for (const c of crt) { combined.set(c, off); off += c.length; }
-    download(combined, 'stream.crt');
+  } else if (t === 'CRT') {
+    const frames = isSlideshow ? screenshots : [{data:bmp, bgColor:currentBgColor}];
+    download(build1MBSlideshowCRT(frames, currentBgColor), 'slideshow.crt');
   }
 }
+
+function build1MBSlideshowCRT(frames, defaultBg) {
+  const n = frames.length, pageSize = 256, pagesPerFrame = 40;
+  const payload = new Uint8Array(n * pagesPerFrame * pageSize).fill(0);
+  for (let i = 0; i < n; i++) {
+    const s = frames[i], f = s.data, base = i * pagesPerFrame * pageSize;
+    payload.set(f.subarray(0, 8000), base);
+    payload.set(f.subarray(8000, 9000), base + 32 * pageSize);
+    payload.set(f.subarray(9000, 10000), base + 36 * pageSize);
+    payload[base + 32 * pageSize + 1023] = s.bgColor !== undefined ? s.bgColor : (defaultBg || 0);
+  }
+  const code = [], labels = {}, patches = [];
+  const add = (...bytes) => bytes.forEach(b => code.push(b));
+  const label = (name) => labels[name] = code.length + 0x080D;
+  const jsr = (name) => { patches.push({ type: 'abs', idx: code.length + 1, name }); add(0x20, 0, 0); };
+  const jmp = (name) => { patches.push({ type: 'abs', idx: code.length + 1, name }); add(0x4C, 0, 0); };
+  const bne = (name) => { patches.push({ type: 'rel', idx: code.length + 1, name }); add(0xD0, 0); };
+  const beq = (name) => { patches.push({ type: 'rel', idx: code.length + 1, name }); add(0xF0, 0); };
+  add(0x78, 0xD8, 0xA9, 0x36, 0x85, 0x01, 0xA9, 0x01, 0x8D, 0x02, 0xDE);
+  add(0xA9, 0x3B, 0x8D, 0x11, 0xD0, 0xA9, 0xD8, 0x8D, 0x16, 0xD0, 0xA9, 0x18, 0x8D, 0x18, 0xD0, 0xA9, 0x00, 0x85, 0xFD);
+  label('RESET'); add(0xA9, 0x00, 0x85, 0x03, 0xA9, 0x01, 0x85, 0x02, 0xA9, 0x01, 0x8D, 0x00, 0xDE, 0xA9, 0x80, 0x85, 0xFC, 0xA9, 0x00, 0x85, 0xFB);
+  label('SHOW'); add(0xA9, 0x20, 0x85, 0xFE, 0xA2, 32); jsr('COPY');
+  add(0xA9, 0x04, 0x85, 0xFE, 0xA2, 4); jsr('COPY');
+  add(0xAD, 0xFF, 0x07, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0);
+  add(0xA9, 0xD8, 0x85, 0xFE, 0xA2, 4); jsr('COPY');
+  add(0xA9, 100, 0x85, 0x04);
+  label('W1'); add(0xAD, 0x12, 0xD0, 0xC9, 0xFE); bne('W1');
+  label('W2'); add(0xAD, 0x12, 0xD0, 0xC9, 0xFE); beq('W2');
+  add(0xC6, 0x04); bne('W1');
+  add(0xE6, 0x03, 0xA5, 0x03, 0xC9, n); bne('SHOW'); jmp('RESET');
+  label('COPY'); add(0xEE, 0x20, 0xD0); label('C_PAGE'); add(0xA0, 0x00);
+  label('C_BYTE'); add(0xB1, 0xFB, 0x91, 0xFD, 0xC8); bne('C_BYTE');
+  add(0xE6, 0xFC, 0xE6, 0xFE, 0xA5, 0xFC, 0xC9, 0xC0); bne('C_DONE');
+  add(0xA9, 0x80, 0x85, 0xFC, 0xE6, 0x02, 0xA5, 0x02, 0x8D, 0x00, 0xDE);
+  label('C_DONE'); add(0xCA); bne('C_PAGE'); add(0xCE, 0x20, 0xD0, 0x60);
+  const finalCode = new Uint8Array(code);
+  patches.forEach(p => {
+    const addr = labels[p.name];
+    if (p.type === 'abs') { finalCode[p.idx] = addr & 0xFF; finalCode[p.idx+1] = (addr>>8)&0xFF; }
+    else finalCode[p.idx] = (addr - (p.idx+1+0x080D)) & 0xFF;
+  });
+  return wrap1MBSlideshowInCRT(payload, finalCode, n);
+}
+
+function wrap1MBSlideshowInCRT(payload, loaderCode, nFrames) {
+  const h = new Uint8Array(64);
+  h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0);
+  h[0x13]=0x40; h[0x14]=0x01; h[0x15]=0x00; h[0x17]=0x20; h[0x18]=0x00; h[0x19]=0x00;
+  h.set(new TextEncoder().encode('1MBSLIDE').subarray(0,32), 0x20);
+  const mk = (b,a,t,d) => {
+    const p = new Uint8Array(16+8192).fill(0xFF);
+    p.set([0x43,0x48,0x49,0x50,0,0,0x20,0x10,0,t,(b>>8),(b&0xFF),(a>>8),(a&0xFF),0x20,0],0);
+    p.set(d.subarray(0,8192),16); return p;
+  };
+  const pad = (d) => {
+    const p = new Uint8Array(8192).fill(0xFF); if (d && d.length) p.set(d.subarray(0,8192)); return p;
+  };
+  const boot = new Uint8Array(8192).fill(0xFF);
+  boot[0] = 0x09; boot[1] = 0x80; boot[2] = 0x09; boot[3] = 0x80;
+  boot[4] = 0xC3; boot[5] = 0xC2; boot[6] = 0xCD; boot[7] = 0x38; boot[8] = 0x30;
+  const bootCode = [0x78,0xD8,0xA2,0xFF,0x9A,0xA2,loaderCode.length,0xBD,0x20,0x80,0x9D,0x0D,0x08,0xCA,0x10,0xF7,0x4C,0x0D,0x08];
+  boot.set(bootCode, 9); boot.set(loaderCode, 32);
+  const crt = [h, mk(0, 0x8000, 0, boot), mk(0, 0xA000, 0, boot)];
+  for (let b = 1; b <= 63; b++) {
+    const bankOff = (b-1)*16384; if (bankOff >= payload.length) break;
+    crt.push(mk(b, 0x8000, 0, pad(payload.subarray(bankOff, bankOff+8192))));
+    crt.push(mk(b, 0xA000, 0, pad(payload.subarray(bankOff+8192, bankOff+16384))));
+  }
+  const total = crt.reduce((a,v)=>a+v.length,0), out = new Uint8Array(total); let off=0;
+  for (const c of crt) { out.set(c,off); off+=c.length; }
+  return out;
+}
+
+
 function download(d, n) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d]));
   a.download = n; a.click();

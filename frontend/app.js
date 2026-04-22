@@ -192,7 +192,7 @@ function frameSizeForMode(mode) {
 // With $0001=$36 (BASIC ROM off), $A000-$BFFF is accessible RAM.
 // Frame 2 ($8E20-$B52F) crosses into that area safely.
 // Frame 3 would start at $B530 and end at $DC3F, crossing I/O at $D000 — not safe.
-const MAX_PRG_FRAMES = 3;
+const MAX_PRG_FRAMES = 100; // Increased to support 1MB CRT slideshows
 function prgSlideshowSize(nFrames) {
   nFrames = Math.min(nFrames, MAX_PRG_FRAMES);
   const frameBase = [0x4000, 0x6710, 0x8E20];
@@ -248,7 +248,7 @@ async function captureImage() {
     const bmpData = new Uint8Array(await r.arrayBuffer());
     const thumb = canvas.toDataURL('image/png');
     const timestamp = new Date().toLocaleTimeString();
-    screenshots.push({ thumb, bmpData, timestamp, mode: currentClientMode, isHires, isFLI, isIFLI });
+    screenshots.push({ thumb, bmpData, timestamp, mode: currentClientMode, isHires, isFLI, isIFLI, bgColor: currentBgColor });
     document.getElementById('screenshot-count').textContent = screenshots.length;
     updateButtonStates();
     void 0;
@@ -572,19 +572,173 @@ async function createSlideshow(type) {
       const prg = buildSlideshowPRG(frames, bg);
       download(prg, 'slideshow.prg');
     } else if (type === 'CRT') {
-      // For CRT: embed the slideshow PRG inside an EasyFlash cartridge
-      // This allows running from a cart without disk and supports the same frames
-      const usedFrames = frames.slice(0, MAX_PRG_FRAMES);
-      if (frames.length > MAX_PRG_FRAMES)
-        alert(`CRT slideshow: using first ${MAX_PRG_FRAMES} frames.`);
-      const prg = buildSlideshowPRG(usedFrames, bg);
-      const crtData = wrapPRGinCRT(prg);
+      // New 1MB implementation for CRT
+      const usedScreenshots = screenshots.filter(s => s.bmpData).slice(0, 100); 
+      const crtData = build1MBSlideshowCRT(usedScreenshots, bg);
       download(crtData, 'slideshow.crt');
     }
   } catch(e) {
     alert('Slideshow generation failed: ' + e.message);
     void 0;
   }
+}
+
+// ==========================================================
+// 1MB CRT Slideshow Generator (EasyFlash Bank-Switching)
+// ==========================================================
+// ==========================================================
+// 1MB CRT Slideshow Generator (EasyFlash Bank-Switching)
+function build1MBSlideshowCRT(frames, defaultBg) {
+  const n = frames.length;
+  const pageSize = 256;
+  const pagesPerFrame = 40;
+  const payload = new Uint8Array(n * pagesPerFrame * pageSize).fill(0);
+
+  for (let i = 0; i < n; i++) {
+    const s = frames[i];
+    const f = s.data || s.bmpData;
+    const base = i * pagesPerFrame * pageSize;
+    // Source offsets: Bitmap(0-7999), Screen(8000-8999), Color(9000-9999)
+    // Target offsets: Bitmap(0), Screen(32*256=8192), Color(36*256=9216)
+    payload.set(f.subarray(0, 8000), base);
+    payload.set(f.subarray(8000, 9000), base + 32 * pageSize);
+    payload.set(f.subarray(9000, 10000), base + 36 * pageSize);
+    // Background color in the last byte of the Screen RAM block (offset 32*256 + 1023 = 9215)
+    payload[base + 32 * pageSize + 1023] = s.bgColor !== undefined ? s.bgColor : (defaultBg || 0);
+  }
+
+  // --- Programmatic Assembler ---
+  const code = [];
+  const labels = {};
+  const patches = [];
+
+  const add = (...bytes) => bytes.forEach(b => code.push(b));
+  const label = (name) => labels[name] = code.length + 0x080D;
+  const jsr = (name) => { patches.push({ type: 'abs', idx: code.length + 1, name }); add(0x20, 0, 0); };
+  const jmp = (name) => { patches.push({ type: 'abs', idx: code.length + 1, name }); add(0x4C, 0, 0); };
+  const bne = (name) => { patches.push({ type: 'rel', idx: code.length + 1, name }); add(0xD0, 0); };
+  const beq = (name) => { patches.push({ type: 'rel', idx: code.length + 1, name }); add(0xF0, 0); };
+
+  // Entry $080D
+  add(0x78, 0xD8); // SEI, CLD
+  add(0xA9, 0x36, 0x85, 0x01); // BASIC off
+  add(0xA9, 0x01, 0x8D, 0x02, 0xDE); // 16k Mode
+  add(0xA9, 0x3B, 0x8D, 0x11, 0xD0); // VIC-II
+  add(0xA9, 0xD8, 0x8D, 0x16, 0xD0);
+  add(0xA9, 0x18, 0x8D, 0x18, 0xD0);
+  add(0xA9, 0x00, 0x85, 0xFD); // DST_LO = 0
+  
+  label('RESET');
+  add(0xA9, 0x00, 0x85, 0x03); // FRAME_COUNT = 0
+  add(0xA9, 0x01, 0x85, 0x02); // BANK = 1
+  add(0xA9, 0x01, 0x8D, 0x00, 0xDE); // Bank Select
+  add(0xA9, 0x80, 0x85, 0xFC); // SRC_HI = $80
+  add(0xA9, 0x00, 0x85, 0xFB); // SRC_LO = 0
+
+  label('SHOW');
+  add(0xA9, 0x20, 0x85, 0xFE); // Bitmap
+  add(0xA2, 32); jsr('COPY');
+  add(0xA9, 0x04, 0x85, 0xFE); // Screen
+  add(0xA2, 4); jsr('COPY');
+  
+  // Set Background Color from Screen RAM tail ($07FF)
+  add(0xAD, 0xFF, 0x07, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0);
+
+  add(0xA9, 0xD8, 0x85, 0xFE); // Color
+  add(0xA2, 4); jsr('COPY');
+
+  // Timer Wait
+  add(0xA9, 100, 0x85, 0x04); // ~2s
+  label('W1');
+  add(0xAD, 0x12, 0xD0, 0xC9, 0xFE); bne('W1');
+  label('W2');
+  add(0xAD, 0x12, 0xD0, 0xC9, 0xFE); beq('W2');
+  add(0xC6, 0x04); bne('W1');
+
+  // Next Frame
+  add(0xE6, 0x03);
+  add(0xA5, 0x03, 0xC9, n);
+  bne('SHOW');
+  jmp('RESET');
+
+  label('COPY');
+  add(0xEE, 0x20, 0xD0); // Border Flash ON
+  label('C_PAGE');
+  add(0xA0, 0x00);
+  label('C_BYTE');
+  add(0xB1, 0xFB, 0x91, 0xFD, 0xC8); bne('C_BYTE');
+  add(0xE6, 0xFC, 0xE6, 0xFE);
+  add(0xA5, 0xFC, 0xC9, 0xC0); bne('C_DONE');
+  add(0xA9, 0x80, 0x85, 0xFC);
+  add(0xE6, 0x02, 0xA5, 0x02, 0x8D, 0x00, 0xDE);
+  label('C_DONE');
+  add(0xCA); bne('C_PAGE');
+  add(0xCE, 0x20, 0xD0); // Border Flash OFF
+  add(0x60);
+
+  // Apply patches
+  const finalCode = new Uint8Array(code);
+  patches.forEach(p => {
+    const addr = labels[p.name];
+    if (p.type === 'abs') {
+      finalCode[p.idx] = addr & 0xFF;
+      finalCode[p.idx + 1] = (addr >> 8) & 0xFF;
+    } else {
+      const rel = addr - (p.idx + 1 + 0x080D);
+      finalCode[p.idx] = rel & 0xFF;
+    }
+  });
+
+  return wrap1MBSlideshowInCRT(payload, finalCode, n);
+}
+
+function wrap1MBSlideshowInCRT(payload, loaderCode, nFrames) {
+  const h = new Uint8Array(64);
+  h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0);
+  h[0x13]=0x40; h[0x14]=0x01; h[0x15]=0x00; h[0x17]=0x20; h[0x18]=0x00; h[0x19]=0x00; // Type 32, 16k Mode
+  h.set(new TextEncoder().encode('1MBSLIDE').subarray(0,32), 0x20);
+
+  const mk = (b,a,t,d) => {
+    const p = new Uint8Array(16+8192).fill(0xFF);
+    p.set([0x43,0x48,0x49,0x50,0,0,0x20,0x10,0,t,(b>>8),(b&0xFF),(a>>8),(a&0xFF),0x20,0],0);
+    p.set(d.subarray(0,8192),16); return p;
+  };
+  const pad = (d) => {
+    if (d.length >= 8192) return d;
+    const p = new Uint8Array(8192).fill(0xFF);
+    p.set(d); return p;
+  };
+
+  const boot = new Uint8Array(8192).fill(0xFF);
+  // C64 Cartridge Signature (16k Mode)
+  boot[0] = 0x09; boot[1] = 0x80; // Cold start vector -> $8009
+  boot[2] = 0x09; boot[3] = 0x80; // Warm start vector -> $8009
+  boot[4] = 0xC3; boot[5] = 0xC2; boot[6] = 0xCD; boot[7] = 0x38; boot[8] = 0x30; // "CBM80"
+  
+  const bootCode = [
+    0x78, 0xD8, 0xA2, 0xFF, 0x9A,
+    0xA2, (loaderCode.length),
+    0xBD, 0x20, 0x80, 0x9D, 0x0D, 0x08, // LDA $8020,X; STA $080D,X
+    0xCA, 0x10, 0xF7,
+    0x4C, 0x0D, 0x08
+  ];
+  boot.set(bootCode, 9); // Start at $8009
+  boot.set(loaderCode, 32); // Loader at $8020
+
+  const crt = [h, mk(0, 0x8000, 0, boot), mk(0, 0xA000, 0, boot)];
+
+  for (let b = 1; b <= 63; b++) {
+    const bankOff = (b - 1) * 16384;
+    if (bankOff >= payload.length) break;
+    const roml = payload.subarray(bankOff, bankOff + 8192);
+    const romh = payload.subarray(bankOff + 8192, bankOff + 16384);
+    crt.push(mk(b, 0x8000, 0, pad(roml)));
+    crt.push(mk(b, 0xA000, 0, pad(romh)));
+  }
+
+  const total = crt.reduce((a,v)=>a+v.length,0), out = new Uint8Array(total); let off=0;
+  for (const c of crt) { out.set(c,off); off+=c.length; }
+  return out;
 }
 
 // Wraps a PRG in an EasyFlash CRT using the existing loader boot code

@@ -32,7 +32,7 @@ echo [+] Hardware Resolution: %SCREEN_W% x %SCREEN_H%
 :: --- Start VLC Capture ---
 echo [.] Starting VLC Capture (Indestructible Mode)...
 :: Standardize flags: :screen-top/left=0 to target primary display and fix black screen issues.
-start /b "" "!VLC!" screen:// :screen-fps=20 :screen-caching=0 :live-caching=0 :screen-top=0 :screen-left=0 :screen-width=%SCREEN_W% :screen-height=%SCREEN_H% :sout=#transcode{vcodec=mjpg,vb=800,width=160,height=200,fps=20}:standard{access=http,mux=mpjpeg,dst=:90/pc.mjpg} :sout-keep
+start /b "" "!VLC!" screen:// :screen-fps=30 :screen-caching=0 :live-caching=0 :screen-top=0 :screen-left=2460 :screen-width=%SCREEN_W% :screen-height=%SCREEN_H% :sout=#transcode{vcodec=mjpg,vb=3200,width=160,height=200,fps=30}:standard{access=http,mux=mpjpeg,dst=:90/pc.mjpg} :sout-keep
 
 :: --- Validation ---
 timeout /t 2 /nobreak > nul
