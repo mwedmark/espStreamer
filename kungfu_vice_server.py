@@ -24,8 +24,21 @@ class VICEKungFuSimulator:
     def start_vice(self):
         """Start VICE with monitor enabled"""
         try:
-            # VICE startup disabled - use manual command
-            return False
+            import subprocess
+            import os
+            
+            prg_path = os.path.abspath('kungfu_sim.prg')
+            print(f"Starting VICE with PRG: {prg_path}")
+            
+            # Start VICE with monitor server enabled
+            self.vice_process = subprocess.Popen([
+                'x64sc.exe',
+                '-monserver',  # Enable monitor server
+                prg_path
+            ])
+            
+            print(f"VICE started with PID: {self.vice_process.pid}")
+            return True
             
         except Exception as e:
             print(f"Failed to start VICE: {e}")
@@ -227,8 +240,8 @@ class VICEWebSocketServer:
                 # Create test PRG
                 self.simulator.create_test_prg()
                 
-                # Start VICE (optional - user can start manually)
-                # self.simulator.start_vice()
+                # Start VICE automatically
+                self.simulator.start_vice()
                 
                 print(f"Sending connect response")
                 await websocket.send(json.dumps({
@@ -306,10 +319,12 @@ async def main():
     print(f"PRG file created: {os.path.abspath('kungfu_sim.prg')}")
     
     print("\nTo test:")
-    print("1. Start VICE manually: x64sc.exe kungfu_sim.prg")
-    print("2. In VICE, type: RUN")
-    print("3. Use ESPStreamer web interface to stream frames")
-    print("4. Generated .bin files can be loaded in VICE monitor")
+    print("1. Open http://localhost:8080")
+    print("2. Toggle to VICE Mode")
+    print("3. Click Connect - VICE will start automatically")
+    print("4. In VICE, type: RUN")
+    print("5. Capture screenshot and click Stream to C64")
+    print("6. Generated .bin files can be loaded in VICE monitor")
     
     async with websockets.serve(server.handle_client, "localhost", 8766):
         print("Server running. Press Ctrl+C to stop.")

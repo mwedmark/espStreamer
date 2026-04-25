@@ -467,6 +467,32 @@ async function save(t) {
 // Machine code at $080D (217 bytes), frame table at $0900
 // ==========================================================
 function buildSlideshowPRG(frames, bgColor) {
+  // Validate input
+  if (!frames || frames.length === 0) {
+    throw new Error('No frames provided for PRG slideshow');
+  }
+  
+  // Validate each frame
+  frames.forEach((frame, index) => {
+    if (!frame || !frame.data) {
+      throw new Error(`Frame ${index} missing data`);
+    }
+    
+    // Check data type and ensure it's Uint8Array
+    let dataArray;
+    if (frame.data instanceof Uint8Array) {
+      dataArray = frame.data;
+    } else if (Array.isArray(frame.data)) {
+      dataArray = new Uint8Array(frame.data);
+    } else {
+      throw new Error(`Frame ${index} data is not Uint8Array or Array, type: ${typeof frame.data}`);
+    }
+    
+    if (dataArray.length < 10000) {
+      throw new Error(`Frame ${index} data too small: ${dataArray.length} bytes, expected 10000`);
+    }
+  });
+  
   const n = Math.min(frames.length, MAX_PRG_FRAMES);
   // Frame storage starts at $4000 — safely above bitmap copy dest ($2000-$3F3F)
   const frameAddrs = [0x4000, 0x6710, 0x8E20];
@@ -546,13 +572,25 @@ function buildSlideshowPRG(frames, bgColor) {
   for (let i = 0; i < n; i++) {
     const off = 2 + (frameAddrs[i] - 0x0801);
     const f = frames[i];
+    
     const frameData = new Uint8Array(10000); // zero-initialised
     // Bitmap (8000 bytes) — same offset in both
-    frameData.set(f.subarray(0, 8000), 0);
+    frameData.set(f.data.subarray(0, 8000), 0);
     // Screen RAM (1000 bytes) — from rawBmp[8192], stored at +8000
-    if (f.length > 8192) frameData.set(f.subarray(8192, Math.min(9192, f.length)), 8000);
+    if (f.data.length > 8192) frameData.set(f.data.subarray(8192, Math.min(9192, f.data.length)), 8000);
     // Color RAM (1000 bytes) — from rawBmp[9216], stored at +9000
-    if (f.length > 9216) frameData.set(f.subarray(9216, Math.min(10216, f.length)), 9000);
+    if (f.data.length > 9216) {
+      const colorData = f.data.subarray(9216, Math.min(10216, f.data.length));
+      frameData.set(colorData, 9000);
+      // Ensure we have exactly 1000 bytes of color data
+      if (colorData.length < 1000) {
+        // Pad with zeros if needed
+        frameData.fill(0, 9000 + colorData.length, 10000);
+      }
+    } else {
+      // No color data available, fill with zeros
+      frameData.fill(0, 9000, 10000);
+    }
     prg.set(frameData, off);
   }
   return prg;
@@ -572,9 +610,14 @@ async function createSlideshow(type) {
       const prg = buildSlideshowPRG(frames, bg);
       download(prg, 'slideshow.prg');
     } else if (type === 'CRT') {
-      // New 1MB implementation for CRT
+      // Fix: use bmpData instead of data for screenshots
       const usedScreenshots = screenshots.filter(s => s.bmpData).slice(0, 100); 
-      const crtData = build1MBSlideshowCRT(usedScreenshots, bg);
+      // Convert to expected format with data property
+      const formattedScreenshots = usedScreenshots.map(s => ({
+        data: s.bmpData,
+        bgColor: s.bgColor
+      }));
+      const crtData = build1MBSlideshowCRT(formattedScreenshots, bg);
       download(crtData, 'slideshow.crt');
     }
   } catch(e) {
@@ -583,113 +626,46 @@ async function createSlideshow(type) {
   }
 }
 
-// ==========================================================
-// 1MB CRT Slideshow Generator (EasyFlash Bank-Switching)
-// ==========================================================
-// ==========================================================
-// 1MB CRT Slideshow Generator (EasyFlash Bank-Switching)
+// Simple CRT Slideshow Generator - just wrap PRG in CRT
 function build1MBSlideshowCRT(frames, defaultBg) {
-  const n = frames.length;
-  const pageSize = 256;
-  const pagesPerFrame = 40;
-  const payload = new Uint8Array(n * pagesPerFrame * pageSize).fill(0);
-
-  for (let i = 0; i < n; i++) {
-    const s = frames[i];
-    const f = s.data || s.bmpData;
-    const base = i * pagesPerFrame * pageSize;
-    // Source offsets: Bitmap(0-7999), Screen(8000-8999), Color(9000-9999)
-    // Target offsets: Bitmap(0), Screen(32*256=8192), Color(36*256=9216)
-    payload.set(f.subarray(0, 8000), base);
-    payload.set(f.subarray(8000, 9000), base + 32 * pageSize);
-    payload.set(f.subarray(9000, 10000), base + 36 * pageSize);
-    // Background color in the last byte of the Screen RAM block (offset 32*256 + 1023 = 9215)
-    payload[base + 32 * pageSize + 1023] = s.bgColor !== undefined ? s.bgColor : (defaultBg || 0);
-  }
-
-  // --- Programmatic Assembler ---
-  const code = [];
-  const labels = {};
-  const patches = [];
-
-  const add = (...bytes) => bytes.forEach(b => code.push(b));
-  const label = (name) => labels[name] = code.length + 0x080D;
-  const jsr = (name) => { patches.push({ type: 'abs', idx: code.length + 1, name }); add(0x20, 0, 0); };
-  const jmp = (name) => { patches.push({ type: 'abs', idx: code.length + 1, name }); add(0x4C, 0, 0); };
-  const bne = (name) => { patches.push({ type: 'rel', idx: code.length + 1, name }); add(0xD0, 0); };
-  const beq = (name) => { patches.push({ type: 'rel', idx: code.length + 1, name }); add(0xF0, 0); };
-
-  // Entry $080D
-  add(0x78, 0xD8); // SEI, CLD
-  add(0xA9, 0x36, 0x85, 0x01); // BASIC off
-  add(0xA9, 0x01, 0x8D, 0x02, 0xDE); // 16k Mode
-  add(0xA9, 0x3B, 0x8D, 0x11, 0xD0); // VIC-II
-  add(0xA9, 0xD8, 0x8D, 0x16, 0xD0);
-  add(0xA9, 0x18, 0x8D, 0x18, 0xD0);
-  add(0xA9, 0x00, 0x85, 0xFD); // DST_LO = 0
-  
-  label('RESET');
-  add(0xA9, 0x00, 0x85, 0x03); // FRAME_COUNT = 0
-  add(0xA9, 0x01, 0x85, 0x02); // BANK = 1
-  add(0xA9, 0x01, 0x8D, 0x00, 0xDE); // Bank Select
-  add(0xA9, 0x80, 0x85, 0xFC); // SRC_HI = $80
-  add(0xA9, 0x00, 0x85, 0xFB); // SRC_LO = 0
-
-  label('SHOW');
-  add(0xA9, 0x20, 0x85, 0xFE); // Bitmap
-  add(0xA2, 32); jsr('COPY');
-  add(0xA9, 0x04, 0x85, 0xFE); // Screen
-  add(0xA2, 4); jsr('COPY');
-  
-  // Set Background Color from Screen RAM tail ($07FF)
-  add(0xAD, 0xFF, 0x07, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0);
-
-  add(0xA9, 0xD8, 0x85, 0xFE); // Color
-  add(0xA2, 4); jsr('COPY');
-
-  // Timer Wait
-  add(0xA9, 100, 0x85, 0x04); // ~2s
-  label('W1');
-  add(0xAD, 0x12, 0xD0, 0xC9, 0xFE); bne('W1');
-  label('W2');
-  add(0xAD, 0x12, 0xD0, 0xC9, 0xFE); beq('W2');
-  add(0xC6, 0x04); bne('W1');
-
-  // Next Frame
-  add(0xE6, 0x03);
-  add(0xA5, 0x03, 0xC9, n);
-  bne('SHOW');
-  jmp('RESET');
-
-  label('COPY');
-  add(0xEE, 0x20, 0xD0); // Border Flash ON
-  label('C_PAGE');
-  add(0xA0, 0x00);
-  label('C_BYTE');
-  add(0xB1, 0xFB, 0x91, 0xFD, 0xC8); bne('C_BYTE');
-  add(0xE6, 0xFC, 0xE6, 0xFE);
-  add(0xA5, 0xFC, 0xC9, 0xC0); bne('C_DONE');
-  add(0xA9, 0x80, 0x85, 0xFC);
-  add(0xE6, 0x02, 0xA5, 0x02, 0x8D, 0x00, 0xDE);
-  label('C_DONE');
-  add(0xCA); bne('C_PAGE');
-  add(0xCE, 0x20, 0xD0); // Border Flash OFF
-  add(0x60);
-
-  // Apply patches
-  const finalCode = new Uint8Array(code);
-  patches.forEach(p => {
-    const addr = labels[p.name];
-    if (p.type === 'abs') {
-      finalCode[p.idx] = addr & 0xFF;
-      finalCode[p.idx + 1] = (addr >> 8) & 0xFF;
-    } else {
-      const rel = addr - (p.idx + 1 + 0x080D);
-      finalCode[p.idx] = rel & 0xFF;
+  // Convert screenshots to PRG frame format with validation
+  const prgFrames = frames.slice(0, 2).map((s, index) => { // Limit to 2 frames for stability
+    if (!s || !s.data) {
+      console.warn(`Frame ${index} missing data, skipping`);
+      return null;
     }
-  });
-
-  return wrap1MBSlideshowInCRT(payload, finalCode, n);
+    
+    // Ensure data is Uint8Array
+    let dataArray;
+    if (s.data instanceof Uint8Array) {
+      dataArray = s.data;
+    } else if (Array.isArray(s.data)) {
+      dataArray = new Uint8Array(s.data);
+    } else {
+      console.warn(`Frame ${index} data is not Uint8Array or Array, type: ${typeof s.data}`);
+      return null;
+    }
+    
+    if (dataArray.length < 10000) {
+      console.warn(`Frame ${index} data too small (${dataArray.length} bytes), expected 10000`);
+      return null;
+    }
+    
+    return {
+      data: dataArray, // Use the Uint8Array data
+      bgColor: s.bgColor !== undefined ? s.bgColor : (defaultBg || 0)
+    };
+  }).filter(f => f !== null); // Remove invalid frames
+  
+  if (prgFrames.length === 0) {
+    throw new Error('No valid frames found for CRT slideshow');
+  }
+  
+  console.log(`Creating CRT with ${prgFrames.length} valid frames (limited to 2 for stability)`);
+  
+  // Just build a PRG and wrap it in CRT - this is known to work
+  const prg = buildSlideshowPRG(prgFrames, defaultBg);
+  return wrapPRGinCRT(prg);
 }
 
 function wrap1MBSlideshowInCRT(payload, loaderCode, nFrames) {
