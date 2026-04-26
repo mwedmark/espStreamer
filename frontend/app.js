@@ -495,17 +495,21 @@ function buildSlideshowPRG(frames, bgColor) {
   
   const n = Math.min(frames.length, MAX_PRG_FRAMES);
   // Frame storage starts at $4000 — safely above bitmap copy dest ($2000-$3F3F)
-  const frameAddrs = [0x4000, 0x6710, 0x8E20];
+  // Dynamically generate frame addresses: each frame is 10000 bytes (0x2710)
+  const frameAddrs = [];
+  for (let i = 0; i < n; i++) {
+    frameAddrs.push(0x4000 + i * 0x2710); // 0x2710 = 10000 decimal
+  }
   const tableAddr  = 0x0900;
   const showFrameAbs = 0x082D; // $080D + 32 bytes of init code
 
   // Assembled 6502 machine code (217 bytes) starting at $080D:
-  // - Inits VIC for MC bitmap, disables BASIC ROM ($0001=$36 to access $A000 RAM)
+  // - Inits VIC for MC bitmap, disables BASIC ROM ($0001=$34 to access $A000 RAM)
   // - Copies each frame's bitmap->$2000, screen->$0400, color->$D800
   // - Waits ~2s via raster-$FE counting, then advances frame and loops
   const asm = [
     0x78,                               // SEI
-    0xA9,0x36, 0x85,0x01,              // LDA #$36, STA $01 (BASIC ROM off)
+    0xA9,0x34, 0x85,0x01,              // LDA #$34, STA $01 (BASIC ROM off, RAM at $A000)
     0xA9,0x3B, 0x8D,0x11,0xD0,        // LDA #$3B, STA $D011 (bitmap on)
     0xA9,0xD8, 0x8D,0x16,0xD0,        // LDA #$D8, STA $D016 (multicolor)
     0xA9,0x18, 0x8D,0x18,0xD0,        // LDA #$18, STA $D018 (scr@$0400 bmp@$2000)
@@ -567,28 +571,27 @@ function buildSlideshowPRG(frames, bgColor) {
   prg.set(table, 2 + (tableAddr - 0x0801));
   // Frame data — rearrange to match what the machine code expects:
   //   machine code reads: bitmap from [+0], screen from [+8000], color from [+9000]
-  //   but ESP32 raw buffer has: bitmap [0..7999], screen [8192..9191], color [9216+]
-  //   (confirmed by the single-frame PRG save and the web viewer both using 8192/9216)
+  //   ESP32 raw buffer has: bitmap [0..7999], screen [8000..8999], color [9000..9999]
+  //   (compact 10000-byte layout, no gaps)
   for (let i = 0; i < n; i++) {
     const off = 2 + (frameAddrs[i] - 0x0801);
     const f = frames[i];
     
     const frameData = new Uint8Array(10000); // zero-initialised
-    // Bitmap (8000 bytes) — same offset in both
+    // Bitmap (8000 bytes) — same offset in both formats
     frameData.set(f.data.subarray(0, 8000), 0);
-    // Screen RAM (1000 bytes) — from rawBmp[8192], stored at +8000
-    if (f.data.length > 8192) frameData.set(f.data.subarray(8192, Math.min(9192, f.data.length)), 8000);
-    // Color RAM (1000 bytes) — from rawBmp[9216], stored at +9000
-    if (f.data.length > 9216) {
-      const colorData = f.data.subarray(9216, Math.min(10216, f.data.length));
+    // Screen & Color offsets depend on source format:
+    //   ESP32 compact (10000 bytes): screen at 8000, color at 9000
+    //   JS converter (10240 bytes): screen at 8192, color at 9216
+    const isCompact = f.data.length <= 10000;
+    const scrOff = isCompact ? 8000 : 8192;
+    const colOff = isCompact ? 9000 : 9216;
+    if (f.data.length > scrOff) frameData.set(f.data.subarray(scrOff, Math.min(scrOff + 1000, f.data.length)), 8000);
+    if (f.data.length > colOff) {
+      const colorData = f.data.subarray(colOff, Math.min(colOff + 1000, f.data.length));
       frameData.set(colorData, 9000);
-      // Ensure we have exactly 1000 bytes of color data
-      if (colorData.length < 1000) {
-        // Pad with zeros if needed
-        frameData.fill(0, 9000 + colorData.length, 10000);
-      }
+      if (colorData.length < 1000) frameData.fill(0, 9000 + colorData.length, 10000);
     } else {
-      // No color data available, fill with zeros
       frameData.fill(0, 9000, 10000);
     }
     prg.set(frameData, off);
@@ -597,7 +600,7 @@ function buildSlideshowPRG(frames, bgColor) {
 }
 
 async function createSlideshow(type) {
-  const frames = screenshots.filter(s => s.bmpData).map(s => s.bmpData);
+  const frames = screenshots.filter(s => s.bmpData).map(s => ({ data: s.bmpData, bgColor: s.bgColor }));
   if (frames.length === 0) {
     alert('No captured frames with binary data.\nUse the CAPTURE button to save frames first.');
     return;
@@ -626,46 +629,82 @@ async function createSlideshow(type) {
   }
 }
 
-// Simple CRT Slideshow Generator - just wrap PRG in CRT
+// CRT Slideshow - wraps PRG in CRT (stable, no crashes)
 function build1MBSlideshowCRT(frames, defaultBg) {
-  // Convert screenshots to PRG frame format with validation
-  const prgFrames = frames.slice(0, 2).map((s, index) => { // Limit to 2 frames for stability
-    if (!s || !s.data) {
-      console.warn(`Frame ${index} missing data, skipping`);
-      return null;
-    }
-    
-    // Ensure data is Uint8Array
-    let dataArray;
-    if (s.data instanceof Uint8Array) {
-      dataArray = s.data;
-    } else if (Array.isArray(s.data)) {
-      dataArray = new Uint8Array(s.data);
-    } else {
-      console.warn(`Frame ${index} data is not Uint8Array or Array, type: ${typeof s.data}`);
-      return null;
-    }
-    
-    if (dataArray.length < 10000) {
-      console.warn(`Frame ${index} data too small (${dataArray.length} bytes), expected 10000`);
-      return null;
-    }
-    
-    return {
-      data: dataArray, // Use the Uint8Array data
-      bgColor: s.bgColor !== undefined ? s.bgColor : (defaultBg || 0)
-    };
-  }).filter(f => f !== null); // Remove invalid frames
-  
-  if (prgFrames.length === 0) {
-    throw new Error('No valid frames found for CRT slideshow');
-  }
-  
-  console.log(`Creating CRT with ${prgFrames.length} valid frames (limited to 2 for stability)`);
-  
-  // Just build a PRG and wrap it in CRT - this is known to work
+  const prgFrames = frames.filter((f, i) => {
+    if (!f || !f.data) { console.warn(`Frame ${i} missing data`); return false; }
+    return true;
+  });
+  if (prgFrames.length === 0) throw new Error('No valid frames found for CRT slideshow');
+  console.log(`Creating CRT with ${prgFrames.length} frames`);
   const prg = buildSlideshowPRG(prgFrames, defaultBg);
   return wrapPRGinCRT(prg);
+}
+
+function createEasyFlashLoader(numBanks, bgColor) {
+  // Corrected bank-switching loader
+  const asm = [
+    0x78,                               // SEI
+    0xA9,0x36, 0x85,0x01,              // LDA #$36, STA $01 (BASIC ROM off)
+    0xA9,0x3B, 0x8D,0x11,0xD0,        // LDA #$3B, STA $D011 (bitmap on)
+    0xA9,0xD8, 0x8D,0x16,0xD0,        // LDA #$D8, STA $D016 (multicolor)
+    0xA9,0x18, 0x8D,0x18,0xD0,        // LDA #$18, STA $D018 (scr@$0400 bmp@$2000)
+    0xA9,bgColor&0xFF, 0x8D,0x20,0xD0,0x8D,0x21,0xD0, // border+bg
+    0xA9,0x00, 0x85,0xFB,              // LDA #0, STA $FB (bank_idx)
+    
+    // show_frame:
+    0xA5,0xFB, 0x8D,0xDE,0x00,        // STA $00DE (EasyFlash bank register)
+    0xA5,0xFB, 0x09,0x80, 0x8D,0xDE,0x00, // ORA #$80, STA $00DE (bank + ROM enable)
+    
+    // Copy from bank ROM at $8000 to display memory
+    // Bitmap: $8000->$2000 (8000 bytes)
+    0xA2,0x1F, 0xA0,0x00,              // LDX #31, LDY #0
+    0xBD,0x00,0x80, 0x91,0x00, 0xC8,0xD0,0xF9, // inner loop
+    0xE6,0x01, 0xE6,0x03, 0xCA,0xD0,0xF2, // advance ptrs
+    0xA0,0x00, 0xBD,0x00,0x80, 0x91,0x00, 0xC8,0xC0,0x40,0xD0,0xF7, // 64 bytes
+    
+    // Screen: $8200->$0400 (1000 bytes)
+    0xA2,0x03, 0xA0,0x00,              // LDX #3, LDY #0
+    0xBD,0x20,0x80, 0x91,0x00, 0xC8,0xD0,0xF9,
+    0xE6,0x01, 0xE6,0x03, 0xCA,0xD0,0xF2,
+    0xA0,0x00, 0xBD,0x20,0x80, 0x91,0x00, 0xC8,0xC0,0xE8,0xD0,0xF7,
+    
+    // Color: $8400->$D800 (1000 bytes)
+    0xA2,0x03, 0xA0,0x00,              // LDX #3, LDY #0
+    0xBD,0x40,0x80, 0x91,0x00, 0xC8,0xD0,0xF9,
+    0xE6,0x01, 0xE6,0x03, 0xCA,0xD0,0xF2,
+    0xA0,0x00, 0xBD,0x40,0x80, 0x91,0x00, 0xC8,0xC0,0xE8,0xD0,0xF7,
+    
+    // Wait ~2 seconds
+    0xA9,100, 0x85,0xFC,
+    0xAD,0x12,0xD0, 0xC9,0xFE, 0xD0,0xF9,
+    0xAD,0x12,0xD0, 0xC9,0xFE, 0xF0,0xF9,
+    0xC6,0xFC, 0xD0,0xEE,
+    
+    // Next bank
+    0xE6,0xFB, 0xA5,0xFB, 0xC9,numBanks,
+    0xD0,0x04,
+    0xA9,0x00, 0x85,0xFB,
+    0x4C,0x20,0x08 // JMP show_frame
+  ];
+  
+  // Create PRG with loader
+  const prg = new Uint8Array(2 + asm.length);
+  prg[0] = 0x08; prg[1] = 0x08; // Load address $0808
+  prg.set(asm, 2);
+  
+  return prg;
+}
+
+function createEasyFlashBank(frameData, bgColor) {
+  // Create 16KB bank with image data at $8000
+  const bank = new Uint8Array(16384).fill(0xFF);
+  
+  // Place image data at $8000 (offset 0 in bank)
+  const imageData = frameData instanceof Uint8Array ? frameData : new Uint8Array(frameData);
+  bank.set(imageData.subarray(0, Math.min(10000, imageData.length)), 0);
+  
+  return bank;
 }
 
 function wrap1MBSlideshowInCRT(payload, loaderCode, nFrames) {
