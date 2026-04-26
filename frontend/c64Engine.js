@@ -120,7 +120,43 @@ window.C64Engine = (function () {
                                             offCtx = offC.getContext('2d'); 
                                             log(`Canvas resized to ${wT}x200`);
                                         }
-                                        offCtx.drawImage(imgS, 0, 0, wT, 200);
+                                        // Clear background with current background color
+                                        offCtx.fillStyle = `rgb(${pal.r[bgC]},${pal.g[bgC]},${pal.b[bgC]})`;
+                                        offCtx.fillRect(0, 0, wT, 200);
+
+                                        // Calculate scaling coordinates
+                                        let sx = 0, sy = 0, sw = imgS.width, sh = imgS.height;
+                                        let dx = 0, dy = 0, dw = wT, dh = 200;
+
+                                        const pixelAspect = currentMode.includes('hr') ? 1 : 2;
+                                        const targetAspect = 1.6; // 320:200
+                                        const imgAspect = imgS.width / imgS.height;
+
+                                        if (sc === 1) { // FIT
+                                            if (imgAspect > targetAspect) {
+                                                // Image is wider: pillarbox
+                                                dw = wT;
+                                                dh = 320 / imgAspect;
+                                                dy = (200 - dh) / 2;
+                                            } else {
+                                                // Image is taller: letterbox
+                                                dh = 200;
+                                                dw = (200 * imgAspect) / pixelAspect;
+                                                dx = (wT - dw) / 2;
+                                            }
+                                        } else if (sc === 2) { // CROP
+                                            if (imgAspect > targetAspect) {
+                                                // Image is wider: crop sides
+                                                sw = imgS.height * targetAspect;
+                                                sx = (imgS.width - sw) / 2;
+                                            } else {
+                                                // Image is taller: crop top/bottom
+                                                sh = imgS.width / targetAspect;
+                                                sy = (imgS.height - sh) / 2;
+                                            }
+                                        }
+
+                                        offCtx.drawImage(imgS, sx, sy, sw, sh, dx, dy, dw, dh);
                                         const imageData = offCtx.getImageData(0, 0, wT, 200);
                                         fCount++;
                                         log(`Frame ${fCount}: Processing ${wT}x200, mode: ${currentMode}`);

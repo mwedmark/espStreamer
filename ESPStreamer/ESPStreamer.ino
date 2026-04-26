@@ -2632,7 +2632,7 @@ void loop() {
         // Setup render buffer and clear it BEFORE decoding starts (so bitwise OR works)
         render_buffer = c64_buffer + (1 - active_buffer) * 34005;
         memset(render_buffer, 0, 34005);
-        if (scalingMode > 0) memset(color_buffer, 0, sizeof(color_buffer)); // clear black-bar areas for FIT/CROP
+        if (scalingMode > 0) memset(color_buffer, globalBgColor, sizeof(color_buffer)); // fill borders with current background color
         
         // Reset Floyd-Steinberg error buffers for the new frame
         if (ditherAlgo == 5) memset(fs_err_buf, 0, sizeof(fs_err_buf));
