@@ -129,32 +129,38 @@ window.C64Engine = (function () {
                                         let dx = 0, dy = 0, dw = wT, dh = 200;
 
                                         const pixelAspect = currentMode.includes('hr') ? 1 : 2;
-                                        const targetAspect = 1.6; // 320:200
+                                        const targetAspect = 1.6; // Visual target aspect (320:200)
                                         const imgAspect = imgS.width / imgS.height;
+                                        
+                                        // Target aspect ratio for the buffer pixels (0.8 for MC, 1.6 for HR)
+                                        const targetPixelAspect = targetAspect / pixelAspect;
 
                                         if (sc === 1) { // FIT
                                             if (imgAspect > targetAspect) {
-                                                // Image is wider: pillarbox
+                                                // Image is wider: pillarbox (fit width)
                                                 dw = wT;
-                                                dh = 320 / imgAspect;
+                                                dh = (wT * pixelAspect) / imgAspect;
                                                 dy = (200 - dh) / 2;
                                             } else {
-                                                // Image is taller: letterbox
+                                                // Image is taller: letterbox (fit height)
                                                 dh = 200;
                                                 dw = (200 * imgAspect) / pixelAspect;
                                                 dx = (wT - dw) / 2;
                                             }
                                         } else if (sc === 2) { // CROP
-                                            if (imgAspect > targetAspect) {
-                                                // Image is wider: crop sides
-                                                sw = imgS.height * targetAspect;
+                                            if (imgAspect > targetPixelAspect) {
+                                                // Image is wider than the target buffer ratio: crop sides
+                                                sw = imgS.height * targetPixelAspect;
                                                 sx = (imgS.width - sw) / 2;
                                             } else {
-                                                // Image is taller: crop top/bottom
-                                                sh = imgS.width / targetAspect;
+                                                // Image is taller than the target buffer ratio: crop top/bottom
+                                                sh = imgS.width / targetPixelAspect;
                                                 sy = (imgS.height - sh) / 2;
                                             }
                                         }
+
+
+
 
                                         offCtx.drawImage(imgS, sx, sy, sw, sh, dx, dy, dw, dh);
                                         const imageData = offCtx.getImageData(0, 0, wT, 200);
