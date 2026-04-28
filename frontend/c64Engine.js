@@ -55,25 +55,32 @@ window.C64Engine = (function () {
                     r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); bl = Math.max(0, Math.min(255, bl));
 
                     let bc = aP[0], bd = (Math.abs(r - pal.r[bc]) * 2) + (Math.abs(g - pal.g[bc]) * 4) + Math.abs(bl - pal.b[bc]);
+                    let effR, effG, effB; // effective output colour used for error diffusion
                     if (isI && isG) {
                         const lumas = [0, 24, 48, 77, 107, 137, 168, 211, 255], pairsH = [0, 0, 11, 11, 12, 12, 15, 15, 1], pairsL = [0, 11, 11, 12, 12, 15, 15, 1, 1];
                         let l = (r * 77 + g * 153 + bl * 26) >> 8, bDL = 1000, bI = 0;
                         for (let k = 0; k < 9; k++) { let dL = Math.abs(l - lumas[k]); if (dL < bDL) { bDL = dL; bI = k; } }
-                        bc = (pairsH[bI] << 4) | (pairsL[bI] & 0x0F);
-                        let aL = lumas[bI]; r = g = bl = aL;
+                        const cH = pairsH[bI], cL = pairsL[bI];
+                        bc = (cH << 4) | (cL & 0x0F);
+                        // Effective screen colour is the average of the two alternating grays
+                        effR = (pal.r[cH] + pal.r[cL]) >> 1;
+                        effG = (pal.g[cH] + pal.g[cL]) >> 1;
+                        effB = (pal.b[cH] + pal.b[cL]) >> 1;
+                        // Keep r/g/bl as original so quantisation error propagates correctly
                     } else {
                         for (let k = 1; k < aP.length; k++) {
                             const it = aP[k];
                             const dy = (Math.abs(r - pal.r[it]) * 2) + (Math.abs(g - pal.g[it]) * 4) + Math.abs(bl - pal.b[it]);
                             if (dy < bd) { bd = dy; bc = it; }
                         }
+                        effR = pal.r[bc]; effG = pal.g[bc]; effB = pal.b[bc];
                     }
                     cb[y * wT + x] = bc;
                     let ri = (y * wT + x) * 3;
                     const rgb = preAllocated.rgb;
                     rgb[ri] = r; rgb[ri + 1] = g; rgb[ri + 2] = bl;
                     if (eS > 0) {
-                        let rE = (r - pal.r[bc]) * eS, gE = (g - pal.g[bc]) * eS, bE = (bl - pal.b[bc]) * eS;
+                        let rE = (r - effR) * eS, gE = (g - effG) * eS, bE = (bl - effB) * eS;
                         const diff = (nx, ny, w) => { if (nx >= 0 && nx < wT && ny < 200) { let ni = (ny * 322 + nx) * 3; er[ni] += rE * w; er[ni + 1] += gE * w; er[ni + 2] += bE * w; } };
                         diff(x + 1, y, 7 / 16); diff(x - 1, y + 1, 3 / 16); diff(x, y + 1, 5 / 16); diff(x + 1, y + 1, 1 / 16);
                     }
