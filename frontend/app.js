@@ -808,6 +808,7 @@ async function upd() {
       if (document.getElementById('dither') && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
       if (document.getElementById('ditherType') && document.activeElement !== document.getElementById('ditherType')) { document.getElementById('ditherType').value = s.ditherType; }
       if (document.getElementById('scaling') && document.activeElement !== document.getElementById('scaling')) { document.getElementById('scaling').value = s.scaling; document.getElementById('c').setAttribute('data-scale', s.scaling); }
+      if (document.getElementById('bgcolor') && document.activeElement !== document.getElementById('bgcolor')) { document.getElementById('bgcolor').value = s.bg; }
     }
     if (r && r.ok) {
       const d = new Uint8Array(await r.arrayBuffer()); 
