@@ -90,37 +90,7 @@ class KungFuFlashStreamer:
             print(f"Stream frame failed: {e}")
             return False
     
-    def convert_image_to_c64(self, image_data):
-        """Convert image data to C64 format"""
-        try:
-            # Decode base64 image
-            image_bytes = base64.b64decode(image_data.split(',')[1])
-            image = Image.open(io.BytesIO(image_bytes))
-            
-            # Resize to C64 dimensions
-            image = image.resize((320, 200), Image.Resampling.LANCZOS)
-            
-            # Convert to RGB
-            image = image.convert('RGB')
-            
-            # Simple C64 conversion (multicolor mode)
-            bitmap_data = bytearray(8192)
-            screen_data = bytearray(1024)
-            color_data = bytearray(1024)
-            
-            # Fill with test pattern for now
-            for i in range(8192):
-                bitmap_data[i] = i % 16
-            
-            for i in range(1024):
-                screen_data[i] = (i % 256)
-                color_data[i] = (i % 16)
-            
-            return bytes(bitmap_data), bytes(screen_data), bytes(color_data)
-            
-        except Exception as e:
-            print(f"Image conversion failed: {e}")
-            return None, None, None
+    # Legacy convert_image_to_c64 removed (frontend sends raw bytes now)
 
 class WebSocketServer:
     def __init__(self):
@@ -143,6 +113,24 @@ class WebSocketServer:
     async def handle_message(self, websocket, message):
         """Handle incoming WebSocket messages"""
         try:
+            if isinstance(message, bytes):
+                if len(message) < 10002:
+                    return
+                # mode = message[0]
+                # bg_color = message[1]
+                bitmap = message[2:8002]
+                screen = message[8002:9002]
+                color = message[9002:10002]
+                
+                success = self.streamer.stream_frame(bitmap, screen, color)
+                await websocket.send(json.dumps({
+                    'type': 'response',
+                    'command': 'stream_frame',
+                    'success': success,
+                    'message': 'Frame streamed (Bin)' if success else 'Stream failed'
+                }))
+                return
+
             data = json.loads(message)
             command = data.get('command')
             
@@ -156,24 +144,12 @@ class WebSocketServer:
                 }))
             
             elif command == 'stream_frame':
-                image_data = data.get('image_data')
-                if image_data:
-                    bitmap, screen, color = self.streamer.convert_image_to_c64(image_data)
-                    if bitmap and screen and color:
-                        success = self.streamer.stream_frame(bitmap, screen, color)
-                        await websocket.send(json.dumps({
-                            'type': 'response',
-                            'command': 'stream_frame',
-                            'success': success,
-                            'message': 'Frame streamed' if success else 'Stream failed'
-                        }))
-                    else:
-                        await websocket.send(json.dumps({
-                            'type': 'response',
-                            'command': 'stream_frame',
-                            'success': False,
-                            'message': 'Image conversion failed'
-                        }))
+                await websocket.send(json.dumps({
+                    'type': 'response',
+                    'command': 'stream_frame',
+                    'success': False,
+                    'message': 'Please use binary streaming for frames'
+                }))
             
             elif command == 'status':
                 await websocket.send(json.dumps({

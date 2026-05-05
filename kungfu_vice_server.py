@@ -149,79 +149,12 @@ class VICEKungFuSimulator:
         self.monitor = VICEBinaryMonitor(6511)
         self.is_setup_done = False
         
-    def setup_multicolor_grey(self):
-        """Configure C64 for Multicolor Grey display via binary monitor"""
+    def setup_default(self):
+        """Initial connection setup"""
         if not self.monitor.connect():
             return False
-            
-        print("Setting up C64 Multicolor Grey mode...")
-        # 1. Enable bitmap mode ($D011)
-        self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
-        # 2. Enable multicolor mode ($D016)
-        self.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
-        # 3. Set screen to $0400, bitmap to $2000 ($D018)
-        self.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
-        # 4. Set Border and Background to Black (0)
-        self.monitor.write_memory(0xD020, bytes([0x00, 0x00]), side_effects=True)
-        
-        # 5. Fill Screen RAM with Dark Grey (11) and Medium Grey (12)
-        # 11 = 0x0B, 12 = 0x0C -> 0xBC
-        self.monitor.write_memory(0x0400, bytes([0xBC] * 1000), side_effects=False)
-        
-        # 6. Fill Color RAM with Light Grey (15)
-        # 15 = 0x0F
-        self.monitor.write_memory(0xD800, bytes([0x0F] * 1000), side_effects=True)
-        
         self.monitor.resume_execution()
-        
-        print("C64 configuration complete.")
         return True
-    
-    def convert_image_to_grey_bitmap(self, image_data):
-        """Convert base64 image to 4-color grey bitmap"""
-        try:
-            image_bytes = base64.b64decode(image_data.split(',')[1])
-            image = Image.open(io.BytesIO(image_bytes))
-            
-            # Resize to 160x200 (Multicolor resolution)
-            resample_filter = getattr(Image, 'Resampling', Image).LANCZOS
-            image = image.resize((160, 200), resample_filter)
-            image = image.convert('L') # Convert to grayscale
-            
-            bitmap_data = bytearray(8000)
-            pixels = image.load()
-            
-            for y in range(200):
-                for x in range(160):
-                    luma = pixels[x, y]
-                    
-                    if luma < 42:
-                        color = 0 # Black -> 00
-                    elif luma < 106:
-                        color = 1 # Dark Grey -> 01
-                    elif luma < 153:
-                        color = 2 # Medium Grey -> 10
-                    else:
-                        color = 3 # Light Grey -> 11
-                    
-                    # Calculate bitmap position
-                    char_x = x // 4
-                    char_y = y // 8
-                    pixel_x = x % 4
-                    pixel_y = y % 8
-                    
-                    char_index = char_y * 40 + char_x
-                    bitmap_byte = char_index * 8 + pixel_y
-                    
-                    if bitmap_byte < 8000:
-                        bitmap_data[bitmap_byte] |= (color & 0x03) << (6 - pixel_x * 2)
-            
-            self.frame_count += 1
-            return bytes(bitmap_data)
-            
-        except Exception as e:
-            print(f"Image conversion failed: {e}")
-            return None
 
 class VICEWebSocketServer:
     def __init__(self):
@@ -242,70 +175,83 @@ class VICEWebSocketServer:
     
     async def handle_message(self, websocket, message):
         try:
+            if isinstance(message, bytes):
+                # Binary payload format:
+                # byte 0: mode (0=multicolor, 1=hires)
+                # byte 1: background color
+                # bytes 2..8001: Bitmap RAM (8000 bytes)
+                # bytes 8002..9001: Screen RAM (1000 bytes)
+                # bytes 9002..10001: Color RAM (1000 bytes)
+                
+                if len(message) < 10002:
+                    print(f"Received binary payload too small: {len(message)}")
+                    return
+                
+                mode = message[0]
+                bg_color = message[1]
+                bitmap = message[2:8002]
+                screen = message[8002:9002]
+                color = message[9002:10002]
+                
+                if self.simulator.monitor.sock:
+                    # Write VICE registers based on mode
+                    if mode == 1: # Hires
+                        self.simulator.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
+                        self.simulator.monitor.write_memory(0xD016, bytes([0xC8]), side_effects=True)
+                    else: # Multicolor
+                        self.simulator.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
+                        self.simulator.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
+                        
+                    self.simulator.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
+                    self.simulator.monitor.write_memory(0xD020, bytes([0x00]), side_effects=True) # Border black
+                    self.simulator.monitor.write_memory(0xD021, bytes([bg_color]), side_effects=True) # Background color
+                    
+                    # Write RAM blocks
+                    self.simulator.monitor.write_memory(0x2000, bitmap)
+                    self.simulator.monitor.write_memory(0x0400, screen)
+                    success = self.simulator.monitor.write_memory(0xD800, color, side_effects=True)
+                    
+                    self.simulator.frame_count += 1
+                    self.simulator.monitor.resume_execution()
+                    
+                    await websocket.send(json.dumps({
+                        'type': 'response',
+                        'command': 'stream_frame',
+                        'success': success,
+                        'message': f'Frame {self.simulator.frame_count} (Bin) transferred to VICE' if success else 'Transfer failed'
+                    }))
+                else:
+                    await websocket.send(json.dumps({
+                        'type': 'response',
+                        'command': 'stream_frame',
+                        'success': False,
+                        'message': 'Not connected to VICE'
+                    }))
+                return
+
             data = json.loads(message)
             command = data.get('command')
             
             if command == 'connect':
                 print("Processing connect command")
                 # Connect and setup VICE
-                success = self.simulator.setup_multicolor_grey()
+                success = self.simulator.setup_default()
                 
                 await websocket.send(json.dumps({
                     'type': 'response',
                     'command': 'connect',
                     'success': success,
-                    'message': 'VICE connected and configured' if success else 'Failed to connect to VICE binary monitor on port 6511. Make sure VICE is running with -binarymonitor.'
+                    'message': 'VICE connected' if success else 'Failed to connect to VICE binary monitor on port 6511. Make sure VICE is running with -binarymonitor.'
                 }))
             
             elif command == 'stream_frame':
-                image_data = data.get('image_data')
-                if image_data:
-                    # Perform full setup on first frame (ensures emulator has booted)
-                    if not self.simulator.is_setup_done:
-                        if self.simulator.setup_multicolor_grey():
-                            self.simulator.is_setup_done = True
-                        
-                    try:
-                        bitmap = self.simulator.convert_image_to_grey_bitmap(image_data)
-                    except Exception as e:
-                        bitmap = None
-                        print(f"Conversion exception: {e}")
-                        
-                    if bitmap and self.simulator.monitor.sock:
-                        # Enforce VIC-II registers every frame in case of emulator reset
-                        self.simulator.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
-                        self.simulator.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
-                        self.simulator.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
-                        self.simulator.monitor.write_memory(0xD020, bytes([0x00, 0x00]), side_effects=True)
-                        
-                        # Write bitmap directly to VICE memory
-                        success = self.simulator.monitor.write_memory(0x2000, bitmap)
-                        
-                        # Resume emulator so it actually renders the changes!
-                        self.simulator.monitor.resume_execution()
-                        
-                        await websocket.send(json.dumps({
-                            'type': 'response',
-                            'command': 'stream_frame',
-                            'success': success,
-                            'message': f'Frame {self.simulator.frame_count} transferred to VICE' if success else 'Transfer failed: write_memory returned False'
-                        }))
-                    else:
-                        error_msg = 'Not connected to VICE' if not self.simulator.monitor.sock else 'Image conversion returned None'
-                        print(f"Stream frame failed: {error_msg}")
-                        await websocket.send(json.dumps({
-                            'type': 'response',
-                            'command': 'stream_frame',
-                            'success': False,
-                            'message': error_msg
-                        }))
-                else:
-                    await websocket.send(json.dumps({
-                        'type': 'response',
-                        'command': 'stream_frame',
-                        'success': False,
-                        'message': 'No image data received'
-                    }))
+                # Deprecated JSON/Base64 image stream fallback
+                await websocket.send(json.dumps({
+                    'type': 'response',
+                    'command': 'stream_frame',
+                    'success': False,
+                    'message': 'Please use binary streaming for frames'
+                }))
                         
             elif command == 'status':
                 # Just report status, don't auto-setup during boot

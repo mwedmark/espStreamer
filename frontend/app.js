@@ -103,7 +103,7 @@ function handleKungFuResponse(response) {
         updateKungFuStatus(response.success ? 'USB Connected' : 'USB Failed', response.success);
         break;
       case 'stream_frame':
-        updateKungFuStatus(response.success ? 'Frame Sent' : 'Send Failed', response.success);
+        updateKungFuStatus(response.success ? (response.message || 'Frame Sent') : 'Send Failed', response.success);
         break;
       case 'status':
         updateKungFuStatus(response.connected ? 'USB Connected' : 'USB Disconnected', response.connected);
@@ -136,14 +136,18 @@ async function sendImageToC64() {
   try {
     // Get the latest screenshot
     const latestScreenshot = screenshots[screenshots.length - 1];
+    if (!latestScreenshot.bmpData) {
+      alert('Legacy screenshot without binary data cannot be streamed');
+      return;
+    }
     
-    // Send frame to server
-    const message = {
-      command: 'stream_frame',
-      image_data: latestScreenshot.thumb
-    };
+    // Build binary payload
+    const payload = new Uint8Array(2 + latestScreenshot.bmpData.length);
+    payload[0] = latestScreenshot.isHires ? 1 : 0;
+    payload[1] = currentBgColor || 0;
+    payload.set(latestScreenshot.bmpData, 2);
     
-    kungFuWebSocket.send(JSON.stringify(message));
+    kungFuWebSocket.send(payload);
     updateKungFuStatus('Image Sent', true);
     
   } catch (error) {
@@ -171,7 +175,7 @@ async function toggleStream() {
     if (toggleBtn) toggleBtn.textContent = 'Stop Stream';
     updateKungFuStatus('Streaming Animation...', true);
     
-    c64StreamInterval = setInterval(() => {
+    c64StreamInterval = setInterval(async () => {
       if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
         clearInterval(c64StreamInterval);
         c64StreamInterval = null;
@@ -180,16 +184,16 @@ async function toggleStream() {
       }
       
       try {
-        const canvas = document.getElementById('c');
-        if (canvas) {
-          // Send live canvas directly without saving to screenshots array
-          const thumb = canvas.toDataURL('image/png');
-          const message = {
-            command: 'stream_frame',
-            image_data: thumb
-          };
-          kungFuWebSocket.send(JSON.stringify(message));
-        }
+        const r = await apiFetch('/data?t=' + Date.now());
+        if (!r.ok) return;
+        const rawBmp = new Uint8Array(await r.arrayBuffer());
+        
+        const payload = new Uint8Array(2 + rawBmp.length);
+        payload[0] = isHires ? 1 : 0;
+        payload[1] = currentBgColor || 0;
+        payload.set(rawBmp, 2);
+        
+        kungFuWebSocket.send(payload);
       } catch (error) {
         void 0;
       }
