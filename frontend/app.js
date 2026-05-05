@@ -122,7 +122,7 @@ function updateKungFuStatus(status, connected) {
   }
 }
 
-async function streamToC64() {
+async function sendImageToC64() {
   if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
     alert('Not connected to Kung Fu Flash server');
     return;
@@ -144,11 +144,56 @@ async function streamToC64() {
     };
     
     kungFuWebSocket.send(JSON.stringify(message));
-    updateKungFuStatus('Streaming...', true);
+    updateKungFuStatus('Image Sent', true);
     
   } catch (error) {
     void 0;
     updateKungFuStatus('Stream Failed', false);
+  }
+}
+
+let c64StreamInterval = null;
+
+async function toggleStream() {
+  if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to Kung Fu Flash server');
+    return;
+  }
+
+  const toggleBtn = document.getElementById('stream-toggle-btn');
+
+  if (c64StreamInterval) {
+    clearInterval(c64StreamInterval);
+    c64StreamInterval = null;
+    if (toggleBtn) toggleBtn.textContent = 'Start Stream';
+    updateKungFuStatus('Stream Stopped', true);
+  } else {
+    if (toggleBtn) toggleBtn.textContent = 'Stop Stream';
+    updateKungFuStatus('Streaming Animation...', true);
+    
+    c64StreamInterval = setInterval(() => {
+      if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+        clearInterval(c64StreamInterval);
+        c64StreamInterval = null;
+        if (toggleBtn) toggleBtn.textContent = 'Start Stream';
+        return;
+      }
+      
+      try {
+        const canvas = document.getElementById('c');
+        if (canvas) {
+          // Send live canvas directly without saving to screenshots array
+          const thumb = canvas.toDataURL('image/png');
+          const message = {
+            command: 'stream_frame',
+            image_data: thumb
+          };
+          kungFuWebSocket.send(JSON.stringify(message));
+        }
+      } catch (error) {
+        void 0;
+      }
+    }, 100); // 10 fps
   }
 }
 
