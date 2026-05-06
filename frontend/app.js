@@ -102,15 +102,35 @@ function handleKungFuResponse(response) {
       case 'connect':
         updateKungFuStatus(response.success ? 'USB Connected' : 'USB Failed', response.success);
         break;
+      case 'send_viewer':
+        updateKungFuStatus(response.success ? 'Viewer Running!' : (response.message || 'Viewer Failed'), response.success);
+        break;
       case 'stream_frame':
         updateKungFuStatus(response.success ? (response.message || 'Frame Sent') : 'Send Failed', response.success);
         break;
       case 'status':
         updateKungFuStatus(response.connected ? 'USB Connected' : 'USB Disconnected', response.connected);
         break;
+      case 'reset':
+        updateKungFuStatus('Reset sent', response.success);
+        break;
     }
   } else if (response.type === 'error') {
     updateKungFuStatus('Error: ' + response.message, false);
+  }
+}
+
+function sendViewerToC64() {
+  if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to Kung Fu Flash server. Click Connect first.');
+    return;
+  }
+  try {
+    updateKungFuStatus('Sending viewer PRG...', true);
+    kungFuWebSocket.send(JSON.stringify({ command: 'send_viewer' }));
+  } catch (error) {
+    void 0;
+    updateKungFuStatus('Send Viewer Failed', false);
   }
 }
 
