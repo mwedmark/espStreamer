@@ -49,10 +49,10 @@ async function connectKungFuFlash() {
     kungFuWebSocket.onopen = function() {
       void 0;
       kungFuConnected = true;
-      updateKungFuStatus('Connected', true);
+      updateKungFuStatus('Connecting to USB...', true);
       
-      // Request connection status
-      kungFuWebSocket.send(JSON.stringify({command: 'status'}));
+      // Request connection to COM port
+      kungFuWebSocket.send(JSON.stringify({command: 'connect'}));
     };
     
     kungFuWebSocket.onmessage = function(event) {

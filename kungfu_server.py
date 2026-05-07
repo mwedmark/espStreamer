@@ -289,18 +289,25 @@ class KungFuFlashSerial:
         self.viewer_running = False
         print("Disconnected from KFF")
 
-    def send_viewer_prg(self):
+    def send_viewer_prg(self, prg_file="viewer.prg"):
         """Send the streamer PRG to KFF via EFSTART:PRG handshake."""
         if not self.ser:
             return False
 
         try:
+            import os
             # Flush
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
             time.sleep(0.1)
 
-            prg_data = STREAMER_PRG
+            if os.path.exists(prg_file):
+                print(f"Found {prg_file} on disk, loading custom PRG...")
+                with open(prg_file, "rb") as f:
+                    prg_data = f.read()
+            else:
+                print(f"Using internal STREAMER_PRG...")
+                prg_data = STREAMER_PRG
             print(f"Sending streamer PRG ({len(prg_data)} bytes) via EFSTART:PRG...")
 
             # --- EFSTART:PRG handshake ---
@@ -363,9 +370,11 @@ class KungFuFlashSerial:
                 offset += actual_size
                 print(f"  Sent {offset}/{len(prg_data)} bytes")
 
-            # If we've sent everything but KFF still asks for more, send 0-length
-            if offset >= len(prg_data):
+            # If the file size was an exact multiple of the requested chunk size,
+            # KFF will request another chunk. We must send a 0-length response.
+            if offset >= len(prg_data) and actual_size == chunk_size:
                 try:
+                    self.ser.timeout = 0.5
                     size_req = self.ser.read(2)
                     if len(size_req) == 2:
                         self.ser.write(bytes([0x00, 0x00]))
@@ -374,21 +383,10 @@ class KungFuFlashSerial:
                     pass
 
             print("Streamer PRG sent successfully!")
-            print("Waiting for C64 to boot viewer...")
-            time.sleep(2)  # Give C64 time to start the PRG
-
-            # Wait for first ACK from C64 viewer
-            self.ser.timeout = 10
-            ack = self.ser.read(1)
-            if len(ack) == 1 and ack[0] == 0xFF:
-                print("C64 viewer is running and ready!")
-                self.viewer_running = True
-                self.ser.timeout = 5
-                return True
-            else:
-                print(f"No ACK from viewer (got: {ack.hex() if ack else 'nothing'})")
-                self.ser.timeout = 5
-                return False
+            print("Kung Fu Flash has now launched the PRG.")
+            print("Note: KFF disables its USB port when a PRG runs, so we cannot wait for an ACK.")
+            self.viewer_running = True
+            return True
 
         except Exception as e:
             print(f"Failed to send viewer PRG: {e}")
