@@ -13,6 +13,7 @@ import serial.tools.list_ports
 import struct
 import time
 import threading
+import base64
 
 # ---------------------------------------------------------------------------
 # Embedded C64 Streamer PRG (6502 machine code)
@@ -59,6 +60,15 @@ def _build_streamer_prg():
     code += [0xA9, 0x00]        # LDA #$00
     code += [0x8D, 0x20, 0xD0]  # STA $D020 (border black)
     code += [0x8D, 0x21, 0xD0]  # STA $D021 (bg black)
+
+    # --- Clear USB FIFO buffer ---
+    # wait_flush ($082F)
+    flush_addr = 0x0801 + len(code) - 2
+    code += [0x2C, 0x09, 0xDE]  # BIT $DE09
+    code += [0x30, 0x05]        # BMI done_flush (+5)
+    code += [0xAD, 0x08, 0xDE]  # LDA $DE08
+    code += [0x4C, flush_addr & 0xFF, (flush_addr >> 8) & 0xFF]
+    # done_flush:
 
     # frame_loop ($082F from $080D + 0x22 = $082F)
     fl_offset = len(code)  # offset within code[] including load addr
@@ -210,6 +220,10 @@ def _build_streamer_prg():
 
 STREAMER_PRG = _build_streamer_prg()
 
+# Export the generated PRG so the user can run it manually
+with open("kungfu_viewer.prg", "wb") as f:
+    f.write(STREAMER_PRG)
+
 
 # ---------------------------------------------------------------------------
 # Kung Fu Flash Serial Interface
@@ -223,6 +237,7 @@ class KungFuFlashSerial:
         self.port_name = None
         self.connected = False
         self.viewer_running = False
+        self.lock = threading.Lock()
 
     @staticmethod
     def find_kff_port():
@@ -263,7 +278,7 @@ class KungFuFlashSerial:
             )
             self.port_name = port
             self.connected = True
-            self.viewer_running = False
+            self.viewer_running = True # Assume viewer is started manually
 
             # Flush any stale data
             self.ser.reset_input_buffer()
@@ -399,34 +414,44 @@ class KungFuFlashSerial:
         if not self.ser or not self.viewer_running:
             return False
 
-        try:
-            # Build payload: mode(1) + bg(1) + bitmap(8000) + screen(1000) + color(1000)
-            payload = bytes([mode & 0xFF, bg_color & 0xFF])
-            payload += bytes(bitmap[:8000])
-            payload += bytes(screen[:1000])
-            payload += bytes(color[:1000])
+        with self.lock:
+            try:
+                # Build payload: mode(1) + bg(1) + bitmap(8000) + screen(1000) + color(1000)
+                payload = bytes([mode & 0xFF, bg_color & 0xFF])
+                payload += bytes(bitmap[:8000])
+                payload += bytes(screen[:1000])
+                payload += bytes(color[:1000])
 
-            # Pad if necessary
-            while len(payload) < 10002:
-                payload += b'\x00'
+                # Pad if necessary
+                while len(payload) < 10002:
+                    payload += b'\x00'
 
-            # Send frame data
-            self.ser.write(payload)
-            self.ser.flush()
+                # Flush any stale input before sending
+                self.ser.reset_input_buffer()
 
-            # Wait for ACK from C64
-            self.ser.timeout = 5
-            ack = self.ser.read(1)
-            if len(ack) == 1 and ack[0] == 0xFF:
-                return True
-            else:
-                print(f"Frame ACK failed (got: {ack.hex() if ack else 'nothing'})")
+                # Send frame data
+                self.ser.write(payload)
+                self.ser.flush()
+
+                # Wait for ACK from C64
+                self.ser.timeout = 2.0 # Shorter timeout for active streaming
+                ack = self.ser.read(1)
+                if len(ack) == 1 and ack[0] == 0xFF:
+                    return True
+                else:
+                    if ack:
+                        print(f"Frame ACK failed (got: {ack.hex()})")
+                    else:
+                        print("Frame ACK timeout")
+                    # On failure, reset buffers to try and recover sync
+                    self.ser.reset_input_buffer()
+                    self.ser.reset_output_buffer()
+                    return False
+
+            except Exception as e:
+                print(f"Stream frame failed: {e}")
+                # self.viewer_running = False # Don't stop on single error
                 return False
-
-        except Exception as e:
-            print(f"Stream frame failed: {e}")
-            self.viewer_running = False
-            return False
 
     def reset_to_menu(self):
         """Reset KFF to menu by opening at 1200 baud."""
@@ -519,23 +544,23 @@ class WebSocketServer:
                     'message': f'Connected to {self.kff.port_name}' if success else 'Connection failed. Check COM port.'
                 }))
 
-            elif command == 'send_viewer':
-                if not self.kff.connected:
-                    await websocket.send(json.dumps({
-                        'type': 'response',
-                        'command': 'send_viewer',
-                        'success': False,
-                        'message': 'Not connected. Connect first.'
-                    }))
-                    return
+            elif command == 'get_viewer':
+                # Send the generated PRG as base64
+                encoded_prg = base64.b64encode(STREAMER_PRG).decode('utf-8')
+                await websocket.send(json.dumps({
+                    'type': 'response',
+                    'command': 'get_viewer',
+                    'success': True,
+                    'prg_data': encoded_prg,
+                    'filename': 'kungfu_viewer.prg'
+                }))
 
-                loop = asyncio.get_event_loop()
-                success = await loop.run_in_executor(None, self.kff.send_viewer_prg)
+            elif command == 'send_viewer':
                 await websocket.send(json.dumps({
                     'type': 'response',
                     'command': 'send_viewer',
-                    'success': success,
-                    'message': 'Viewer running on C64!' if success else 'Failed to send viewer. Make sure KFF is in menu mode.'
+                    'success': True,
+                    'message': 'Viewer must be started manually on C64. Ready to stream!'
                 }))
 
             elif command == 'status':
@@ -616,11 +641,10 @@ async def main():
     print("WebSocket server on ws://localhost:8765")
     print()
     print("Usage:")
-    print("  1. Connect KFF via USB, make sure KFF menu is showing on C64")
-    print("  2. Open ESPStreamer web interface")
-    print("  3. Set mode to 'Hardware Mode' and click Connect")
-    print("  4. Click 'Send Viewer' to boot the streaming viewer on C64")
-    print("  5. Stream frames!")
+    print("  1. Copy 'kungfu_viewer.prg' to Kung Fu Flash SD card.")
+    print("  2. Boot 'kungfu_viewer.prg' manually on the C64.")
+    print("  3. Open ESPStreamer web interface, set to 'Hardware Mode' and click Connect.")
+    print("  4. Click 'Start Stream' to send frames!")
     print()
 
     async with websockets.serve(server.handle_client, "localhost", 8765):

@@ -7,6 +7,7 @@ let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 
 let kungFuWebSocket = null;
 let kungFuConnected = false;
 let kungFuViceMode = false; // VICE simulation mode
+let frameResolve = null; // For async frame sync
 
 // Size tracking for export limits
 const MAX_PRG_SIZE = 65536; // ~64KB max for C64 PRG
@@ -77,6 +78,16 @@ async function connectKungFuFlash() {
   }
 }
 
+async function downloadKFFViewer() {
+  if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to Kung Fu Flash server. Please click Connect first.');
+    return;
+  }
+  
+  updateKungFuStatus('Requesting Viewer PRG...', true);
+  kungFuWebSocket.send(JSON.stringify({command: 'get_viewer'}));
+}
+
 function toggleViceMode() {
   kungFuViceMode = !kungFuViceMode;
   const modeText = kungFuViceMode ? 'VICE Mode' : 'Hardware Mode';
@@ -107,6 +118,10 @@ function handleKungFuResponse(response) {
         break;
       case 'stream_frame':
         updateKungFuStatus(response.success ? (response.message || 'Frame Sent') : 'Send Failed', response.success);
+        if (frameResolve) {
+          frameResolve(response.success);
+          frameResolve = null;
+        }
         break;
       case 'status':
         updateKungFuStatus(response.connected ? 'USB Connected' : 'USB Disconnected', response.connected);
@@ -114,25 +129,26 @@ function handleKungFuResponse(response) {
       case 'reset':
         updateKungFuStatus('Reset sent', response.success);
         break;
+      case 'get_viewer':
+        if (response.success && response.prg_data) {
+          // Decode base64 and download
+          const binaryString = window.atob(response.prg_data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          download(bytes, response.filename || 'kungfu_viewer.prg');
+          updateKungFuStatus('Viewer Downloaded', true);
+        } else {
+          updateKungFuStatus('Download Failed', false);
+        }
+        break;
     }
   } else if (response.type === 'error') {
     updateKungFuStatus('Error: ' + response.message, false);
   }
 }
 
-function sendViewerToC64() {
-  if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
-    alert('Not connected to Kung Fu Flash server. Click Connect first.');
-    return;
-  }
-  try {
-    updateKungFuStatus('Sending viewer PRG...', true);
-    kungFuWebSocket.send(JSON.stringify({ command: 'send_viewer' }));
-  } catch (error) {
-    void 0;
-    updateKungFuStatus('Send Viewer Failed', false);
-  }
-}
 
 function updateKungFuStatus(status, connected) {
   const statusElement = document.getElementById('kungfu-status');
@@ -187,25 +203,28 @@ async function toggleStream() {
   const toggleBtn = document.getElementById('stream-toggle-btn');
 
   if (c64StreamInterval) {
-    clearInterval(c64StreamInterval);
-    c64StreamInterval = null;
+    // We reuse this variable name for the "running" state
+    c64StreamInterval = false; 
     if (toggleBtn) toggleBtn.textContent = 'Start Stream';
     updateKungFuStatus('Stream Stopped', true);
   } else {
+    c64StreamInterval = true;
     if (toggleBtn) toggleBtn.textContent = 'Stop Stream';
-    updateKungFuStatus('Streaming Animation...', true);
+    updateKungFuStatus('Streaming...', true);
     
-    c64StreamInterval = setInterval(async () => {
-      if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
-        clearInterval(c64StreamInterval);
-        c64StreamInterval = null;
-        if (toggleBtn) toggleBtn.textContent = 'Start Stream';
+    // Start the async loop
+    const streamLoop = async () => {
+      if (!c64StreamInterval || !kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+        c64StreamInterval = false;
         return;
       }
       
       try {
         const r = await apiFetch('/data?t=' + Date.now());
-        if (!r.ok) return;
+        if (!r.ok) {
+          setTimeout(streamLoop, 100);
+          return;
+        }
         const rawBmp = new Uint8Array(await r.arrayBuffer());
         
         const payload = new Uint8Array(2 + rawBmp.length);
@@ -213,11 +232,25 @@ async function toggleStream() {
         payload[1] = currentBgColor || 0;
         payload.set(rawBmp, 2);
         
+        // Wait for response from server before next frame
+        const frameDone = new Promise(resolve => { frameResolve = resolve; });
         kungFuWebSocket.send(payload);
+        
+        // Wait for the ACK from the server (which waited for ACK from C64)
+        await Promise.race([
+            frameDone,
+            new Promise((_, reject) => setTimeout(() => reject('timeout'), 5000))
+        ]);
+        
+        // Next frame immediately (or with small delay to prevent browser locking)
+        if (c64StreamInterval) setTimeout(streamLoop, 10); 
       } catch (error) {
         void 0;
+        if (c64StreamInterval) setTimeout(streamLoop, 1000);
       }
-    }, 100); // 10 fps
+    };
+    
+    streamLoop();
   }
 }
 
