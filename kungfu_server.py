@@ -33,196 +33,219 @@ import base64
 #   $DE0A = USB data write
 # ---------------------------------------------------------------------------
 
-def _build_streamer_prg():
-    """Build the C64 streamer PRG as a byte array."""
+def add_rel(code, opcode, target_addr, current_addr):
+    disp = target_addr - (current_addr + 2)
+    if disp < -128 or disp > 127:
+        raise ValueError(f"Branch out of range: {disp}")
+    code += [opcode, disp & 0xFF]
+
+def _build_streamer_code(base_addr):
+    """Build the C64 streamer machine code using EasyFlash 3 chunked request protocol."""
     code = []
 
-    # --- BASIC stub: 10 SYS 2061 ---
-    # Load address $0801
-    code += [0x01, 0x08]
-    # BASIC line: pointer $080B, line 10, SYS token, "2061", end
-    code += [0x0B, 0x08, 0x0A, 0x00, 0x9E, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00]
+    # --- Machine Code Start ---
+    code += [0x78] # SEI
+    code += [0xD8] # CLD
+    code += [0xA9, 0x35, 0x85, 0x01] # I/O visible
 
-    # --- Machine code at $080D ---
-    # Init
-    code += [0x78]              # SEI
-    code += [0xD8]              # CLD
-    code += [0xA9, 0x35]        # LDA #$35  (I/O visible, ROMs off)
-    code += [0x85, 0x01]        # STA $01
-    code += [0xA9, 0x03]        # LDA #$03  (VIC bank 0)
-    code += [0x8D, 0x00, 0xDD]  # STA $DD00
-    code += [0xA9, 0x3B]        # LDA #$3B  (bitmap mode on)
-    code += [0x8D, 0x11, 0xD0]  # STA $D011
-    code += [0xA9, 0xD8]        # LDA #$D8  (multicolor)
-    code += [0x8D, 0x16, 0xD0]  # STA $D016
-    code += [0xA9, 0x18]        # LDA #$18  (screen@$0400, bmp@$2000)
-    code += [0x8D, 0x18, 0xD0]  # STA $D018
-    code += [0xA9, 0x00]        # LDA #$00
-    code += [0x8D, 0x20, 0xD0]  # STA $D020 (border black)
-    code += [0x8D, 0x21, 0xD0]  # STA $D021 (bg black)
+    # Define jump over subroutines
+    jmp_start = base_addr + len(code)
+    code += [0x4C, 0x00, 0x00] # JMP main_loop
+    
+    # --- Subroutine: ef3usb_fread ---
+    # Expects X = size low, Y = size high, $FC = buffer ptr
+    fread_addr = base_addr + len(code)
+    
+    # wait_usb_tx_ok
+    wait_tx_1 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x50, wait_tx_1, base_addr + len(code)) # BVC
+    code += [0x8E, 0x0A, 0xDE] # STX $DE0A
+    
+    # wait_usb_tx_ok
+    wait_tx_2 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x50, wait_tx_2, base_addr + len(code)) # BVC
+    code += [0x8C, 0x0A, 0xDE] # STY $DE0A
+    
+    # wait_usb_rx_ok
+    wait_rx_1 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x10, wait_rx_1, base_addr + len(code)) # BPL
+    code += [0xAE, 0x0A, 0xDE, 0x86, 0x04] # LDX $DE0A, STX $04
+    
+    # wait_usb_rx_ok
+    wait_rx_2 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x10, wait_rx_2, base_addr + len(code)) # BPL
+    code += [0xAC, 0x0A, 0xDE, 0x84, 0x05] # LDY $DE0A, STY $05
+    
+    code += [0x8A] # TXA
+    
+    # ef3usb_read_common
+    common_addr = base_addr + len(code)
+    
+    code += [0x49, 0xFF, 0xAA] # EOR #$FF, TAX
+    code += [0x98, 0x49, 0xFF, 0x85, 0xFE] # TYA, EOR #$FF, STA $FE (m_size_hi)
+    code += [0xA0, 0x00] # LDY #0
+    jmp_inc_fwd = len(code)
+    code += [0x4C, 0x00, 0x00] # JMP incCounter
+    
+    # getBytes
+    get_bytes_addr = base_addr + len(code)
+    wait_rx_3 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x10, wait_rx_3, base_addr + len(code)) # BPL
+    code += [0xAD, 0x0A, 0xDE] # LDA $DE0A
+    code += [0x91, 0xFC] # STA ($FC),Y
+    code += [0xC8] # INY
+    bne_inc_fwd = len(code)
+    code += [0xD0, 0x00] # BNE incCounter
+    code += [0xE6, 0xFD] # INC $FD
+    
+    # incCounter
+    inc_counter_addr = base_addr + len(code)
+    code[jmp_inc_fwd + 1] = inc_counter_addr & 0xFF
+    code[jmp_inc_fwd + 2] = (inc_counter_addr >> 8) & 0xFF
+    code[bne_inc_fwd + 1] = (inc_counter_addr - (base_addr + bne_inc_fwd + 2)) & 0xFF
+    
+    code += [0xE8] # INX
+    add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE getBytes
+    code += [0xE6, 0xFE] # INC $FE
+    add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE getBytes
+    
+    # end
+    code += [0x60] # RTS
 
-    # --- Clear USB FIFO buffer ---
-    # wait_flush ($082F)
-    flush_addr = 0x0801 + len(code) - 2
-    code += [0x2C, 0x09, 0xDE]  # BIT $DE09
-    code += [0x30, 0x05]        # BMI done_flush (+5)
-    code += [0xAD, 0x08, 0xDE]  # LDA $DE08
-    code += [0x4C, flush_addr & 0xFF, (flush_addr >> 8) & 0xFF]
-    # done_flush:
+    # --- Main Loop ---
+    main_loop_addr = base_addr + len(code)
+    # Patch JMP over subroutines
+    code[jmp_start - base_addr + 1] = main_loop_addr & 0xFF
+    code[jmp_start - base_addr + 2] = (main_loop_addr >> 8) & 0xFF
 
-    # frame_loop ($082F from $080D + 0x22 = $082F)
-    fl_offset = len(code)  # offset within code[] including load addr
-    fl_addr = 0x0801 + fl_offset - 2  # subtract 2 for load address bytes
+    # Read Mode and BG color (2 bytes) -> $0200
+    code += [0xA9, 0x01, 0x8D, 0x20, 0xD0] # Border = WHITE
+    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
+    code += [0xA9, 0x02, 0x85, 0xFD] # $FD = $02
+    code += [0xA2, 0x02, 0xA0, 0x00] # X = 2, Y = 0 (2 bytes)
+    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
+    
+    # Read Bitmap (8000 bytes) -> $2000
+    code += [0xA9, 0x02, 0x8D, 0x20, 0xD0] # Border = RED
+    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
+    code += [0xA9, 0x20, 0x85, 0xFD] # $FD = $20
+    code += [0xA2, 0x40, 0xA0, 0x1F] # X = $40, Y = $1F (8000 bytes)
+    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
 
-    # Send ACK ($FF) to PC
-    code += [0xA9, 0xFF]        # LDA #$FF
-    wt_off = len(code)
-    code += [0x2C, 0x09, 0xDE]  # BIT $DE09  (wait_tx)
-    code += [0x70, 0xFB]        # BVS wait_tx (-5 → back to BIT)
-    code += [0x8D, 0x0A, 0xDE]  # STA $DE0A
+    # Read Screen (1000 bytes) -> $0400
+    code += [0xA9, 0x05, 0x8D, 0x20, 0xD0] # Border = GREEN
+    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
+    code += [0xA9, 0x04, 0x85, 0xFD] # $FD = $04
+    code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
+    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
 
-    # Read mode byte
-    wm_off = len(code)
-    code += [0x2C, 0x09, 0xDE]  # BIT $DE09
-    code += [0x30, 0xFB]        # BMI wait_mode (-5)
-    code += [0xAD, 0x08, 0xDE]  # LDA $DE08
-    code += [0x85, 0xFB]        # STA $FB (mode)
+    # Read Color (1000 bytes) -> $D800
+    code += [0xA9, 0x0E, 0x8D, 0x20, 0xD0] # Border = BLUE
+    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
+    code += [0xA9, 0xD8, 0x85, 0xFD] # $FD = $D8
+    code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
+    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
 
-    # Read bg_color byte
-    wb_off = len(code)
-    code += [0x2C, 0x09, 0xDE]  # BIT $DE09
-    code += [0x30, 0xFB]        # BMI wait_bg (-5)
-    code += [0xAD, 0x08, 0xDE]  # LDA $DE08
-    code += [0x85, 0xFC]        # STA $FC (bg_color)
-
-    # Apply mode: if mode==0 → multicolor ($D8), else hires ($C8)
-    code += [0xA5, 0xFB]        # LDA $FB
-    code += [0xF0, 0x04]        # BEQ +4 → mc_mode
-    code += [0xA9, 0xC8]        # LDA #$C8 (hires)
-    code += [0xD0, 0x02]        # BNE +2 → set_d016
-    # mc_mode:
-    code += [0xA9, 0xD8]        # LDA #$D8 (multicolor)
-    # set_d016:
-    code += [0x8D, 0x16, 0xD0]  # STA $D016
-    code += [0xA5, 0xFC]        # LDA $FC
-    code += [0x8D, 0x20, 0xD0]  # STA $D020
-    code += [0x8D, 0x21, 0xD0]  # STA $D021
-
-    # --- Helper: read N bytes from USB to ($FD),Y ---
-    # We'll use inline calls. The copy_data subroutine will be at the end.
-    # Parameters: $FD/$FE=dest, X=full pages, $02=tail bytes
-    # We compute the subroutine address after emitting the main loop.
-
-    # Read bitmap: 8000 bytes = 31 pages + 64 tail → $2000
-    code += [0xA9, 0x00]        # LDA #$00
-    code += [0x85, 0xFD]        # STA $FD
-    code += [0xA9, 0x20]        # LDA #$20
-    code += [0x85, 0xFE]        # STA $FE
-    code += [0xA2, 0x1F]        # LDX #31
-    code += [0xA9, 0x40]        # LDA #64
-    code += [0x85, 0x02]        # STA $02
-    jsr1_off = len(code)
-    code += [0x20, 0x00, 0x00]  # JSR copy_data (placeholder)
-
-    # Read screen: 1000 bytes = 3 pages + 232 tail → $0400
-    code += [0xA9, 0x00]        # LDA #$00
-    code += [0x85, 0xFD]        # STA $FD
-    code += [0xA9, 0x04]        # LDA #$04
-    code += [0x85, 0xFE]        # STA $FE
-    code += [0xA2, 0x03]        # LDX #3
-    code += [0xA9, 0xE8]        # LDA #232
-    code += [0x85, 0x02]        # STA $02
-    jsr2_off = len(code)
-    code += [0x20, 0x00, 0x00]  # JSR copy_data (placeholder)
-
-    # Read color: 1000 bytes = 3 pages + 232 tail → $D800
-    code += [0xA9, 0x00]        # LDA #$00
-    code += [0x85, 0xFD]        # STA $FD
-    code += [0xA9, 0xD8]        # LDA #$D8
-    code += [0x85, 0xFE]        # STA $FE
-    code += [0xA2, 0x03]        # LDX #3
-    code += [0xA9, 0xE8]        # LDA #232
-    code += [0x85, 0x02]        # STA $02
-    jsr3_off = len(code)
-    code += [0x20, 0x00, 0x00]  # JSR copy_data (placeholder)
-
-    # JMP frame_loop
-    code += [0x4C, fl_addr & 0xFF, (fl_addr >> 8) & 0xFF]
-
-    # --- copy_data subroutine ---
-    sub_addr = 0x0801 + len(code) - 2
-    # Patch JSR addresses
-    code[jsr1_off + 1] = sub_addr & 0xFF
-    code[jsr1_off + 2] = (sub_addr >> 8) & 0xFF
-    code[jsr2_off + 1] = sub_addr & 0xFF
-    code[jsr2_off + 2] = (sub_addr >> 8) & 0xFF
-    code[jsr3_off + 1] = sub_addr & 0xFF
-    code[jsr3_off + 2] = (sub_addr >> 8) & 0xFF
-
-    # copy_data:
-    code += [0xE0, 0x00]        # CPX #0
-    code += [0xF0, 0x00]        # BEQ tail_only (placeholder, patch below)
-    beq_patch = len(code) - 1
-
-    # full_page_loop:
-    fpl_addr = 0x0801 + len(code) - 2
-    code += [0xA0, 0x00]        # LDY #0
-    # full_inner:
-    fi_addr = 0x0801 + len(code) - 2
-    code += [0x2C, 0x09, 0xDE]  # BIT $DE09
-    code += [0x30, 0xFB]        # BMI full_inner (-5)
-    code += [0xAD, 0x08, 0xDE]  # LDA $DE08
-    code += [0x91, 0xFD]        # STA ($FD),Y
-    code += [0xC8]              # INY
-    # BNE full_inner: displacement = fi_addr - (current_addr + 2)
-    bne_fi_addr = 0x0801 + len(code) - 2
-    disp = fi_addr - (bne_fi_addr + 2)
-    code += [0xD0, disp & 0xFF]  # BNE full_inner
-
-    code += [0xE6, 0xFE]        # INC $FE
-    code += [0xCA]              # DEX
-    # BNE full_page_loop
-    bne_fpl_addr = 0x0801 + len(code) - 2
-    disp = fpl_addr - (bne_fpl_addr + 2)
-    code += [0xD0, disp & 0xFF]  # BNE full_page_loop
-
-    # tail_only:
-    tail_addr = 0x0801 + len(code) - 2
-    # Patch BEQ
-    code[beq_patch] = (tail_addr - (sub_addr + 4)) & 0xFF
-
-    code += [0xA5, 0x02]        # LDA $02
-    code += [0xF0, 0x00]        # BEQ done (placeholder)
-    beq_done_patch = len(code) - 1
-
-    code += [0xA0, 0x00]        # LDY #0
-    # tail_inner:
-    ti_addr = 0x0801 + len(code) - 2
-    code += [0x2C, 0x09, 0xDE]  # BIT $DE09
-    code += [0x30, 0xFB]        # BMI tail_inner (-5)
-    code += [0xAD, 0x08, 0xDE]  # LDA $DE08
-    code += [0x91, 0xFD]        # STA ($FD),Y
-    code += [0xC8]              # INY
-    code += [0xC4, 0x02]        # CPY $02
-    # BNE tail_inner
-    bne_ti_addr = 0x0801 + len(code) - 2
-    disp = ti_addr - (bne_ti_addr + 2)
-    code += [0xD0, disp & 0xFF]
-
-    # done:
-    done_addr = 0x0801 + len(code) - 2
-    code[beq_done_patch] = (done_addr - (tail_addr + 4)) & 0xFF
-
-    code += [0x60]              # RTS
+    # Apply VIC Settings
+    code += [0xAD, 0x01, 0x02] # LDA $0201 (bg_color)
+    code += [0x8D, 0x21, 0xD0] # STA $D021
+    code += [0x8D, 0x20, 0xD0] # STA $D020 (border = bg_color)
+    
+    code += [0xAD, 0x00, 0x02] # LDA $0200 (mode)
+    code += [0xC9, 0x00] # CMP #$00 (0 = Multicolor)
+    
+    apply_multi_addr = base_addr + len(code)
+    code += [0xF0, 0x00] # BEQ apply_multi (patch later)
+    
+    # Hires mode
+    code += [0xA9, 0x3B, 0x8D, 0x11, 0xD0] # STA $D011
+    code += [0xA9, 0x08, 0x8D, 0x16, 0xD0] # STA $D016
+    code += [0xA9, 0x18, 0x8D, 0x18, 0xD0] # STA $D018
+    
+    jmp_loop_addr = base_addr + len(code)
+    code += [0x4C, main_loop_addr & 0xFF, (main_loop_addr >> 8) & 0xFF] # JMP main_loop
+    
+    # apply_multi
+    patched_multi_addr = base_addr + len(code)
+    code[apply_multi_addr - base_addr + 1] = (patched_multi_addr - (apply_multi_addr + 2)) & 0xFF
+    
+    code += [0xA9, 0x3B, 0x8D, 0x11, 0xD0] # STA $D011
+    code += [0xA9, 0x18, 0x8D, 0x16, 0xD0] # STA $D016 (multicolor)
+    code += [0xA9, 0x18, 0x8D, 0x18, 0xD0] # STA $D018
+    
+    # JMP main_loop
+    code += [0x4C, main_loop_addr & 0xFF, (main_loop_addr >> 8) & 0xFF]
 
     return bytes(code)
 
+def _build_streamer_crt():
+    """Build an EasyFlash 3 CRT containing the streamer code."""
+    # CRT Header
+    header = b"C64 CARTRIDGE   "
+    header += struct.pack(">I", 0x40)    # Header size
+    header += struct.pack(">H", 0x0100)  # Version
+    header += struct.pack(">H", 32)      # EasyFlash type
+    header += b"\x00"                    # EXROM
+    header += b"\x00"                    # GAME
+    header += b"\x00" * 6                # Reserved
+    header += b"ESPSTREAMER".ljust(32, b"\x00")
+
+    # CHIP Packet (16KB Bank 0)
+    rom_data = bytearray(16384)
+    
+    # Cold start vectors at $BFFC
+    rom_data[0x3FFC] = 0x00
+    rom_data[0x3FFD] = 0x80
+    rom_data[0x3FFE] = 0x00
+    rom_data[0x3FFF] = 0x80
+    
+    # CBM signature at $8000
+    rom_data[0:9] = b"\x00\x80\x00\x80\xC3\xC2\xCD\x38\x30"
+    
+    # Code at $8009
+    code = _build_streamer_code(0x8009)
+    rom_data[0x09 : 0x09 + len(code)] = code
+    
+    chip_header = b"CHIP"
+    chip_header += struct.pack(">I", 16384 + 0x10) # Packet size
+    chip_header += struct.pack(">H", 0x0000)        # ROM type
+    chip_header += struct.pack(">H", 0x0000)        # Bank
+    chip_header += struct.pack(">H", 0x8000)        # Load addr
+    chip_header += struct.pack(">H", 16384)         # Size
+    
+    return header + chip_header + rom_data
+
+def _build_streamer_prg():
+    """Build the C64 streamer PRG using EasyFlash 3 chunked request protocol."""
+    code = [
+        0x01, 0x08, # Load address $0801
+        0x0B, 0x08, # Pointer to next line ($080B)
+        0x0A, 0x00, # Line number 10
+        0x9E,       # SYS token
+        0x32, 0x30, 0x36, 0x31, # "2061"
+        0x00,       # End of line
+        0x00, 0x00  # End of program
+    ]
+    
+    # 2061 = $080D. Append machine code running at $080D
+    code.extend(_build_streamer_code(0x080D))
+    
+    return bytes(code)
 
 STREAMER_PRG = _build_streamer_prg()
+STREAMER_CRT = _build_streamer_crt()
 
-# Export the generated PRG so the user can run it manually
+# Export both so the user can choose their workflow
 with open("kungfu_viewer.prg", "wb") as f:
     f.write(STREAMER_PRG)
+    
+with open("kungfu_viewer.crt", "wb") as f:
+    f.write(STREAMER_CRT)
 
 
 # ---------------------------------------------------------------------------
@@ -273,18 +296,20 @@ class KungFuFlashSerial:
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
-                timeout=5,
-                write_timeout=5
+                timeout=2,
+                write_timeout=2
             )
+            self.ser.dtr = True
+            self.ser.rts = True
             self.port_name = port
             self.connected = True
             self.viewer_running = True # Assume viewer is started manually
 
-            # Flush any stale data
-            self.ser.reset_input_buffer()
+            # Do NOT flush input buffer because C64 might have already sent a chunk request!
             self.ser.reset_output_buffer()
 
             print(f"Connected to KFF on {port}")
+            print("Ready for chunked data flow.")
             return True
 
         except Exception as e:
@@ -399,7 +424,9 @@ class KungFuFlashSerial:
 
             print("Streamer PRG sent successfully!")
             print("Kung Fu Flash has now launched the PRG.")
-            print("Note: KFF disables its USB port when a PRG runs, so we cannot wait for an ACK.")
+            print("Waiting for frames...")
+            time.sleep(0.5)
+            self.ser.reset_input_buffer()
             self.viewer_running = True
             return True
 
@@ -410,47 +437,57 @@ class KungFuFlashSerial:
             return False
 
     def stream_frame(self, mode, bg_color, bitmap, screen, color):
-        """Stream a single frame to the C64 viewer."""
+        """Stream a single frame to the C64 viewer using chunked flow."""
         if not self.ser or not self.viewer_running:
             return False
 
         with self.lock:
             try:
-                # Build payload: mode(1) + bg(1) + bitmap(8000) + screen(1000) + color(1000)
+                # Payload is exactly 10002 bytes
                 payload = bytes([mode & 0xFF, bg_color & 0xFF])
                 payload += bytes(bitmap[:8000])
                 payload += bytes(screen[:1000])
                 payload += bytes(color[:1000])
 
-                # Pad if necessary
                 while len(payload) < 10002:
                     payload += b'\x00'
 
-                # Flush any stale input before sending
-                self.ser.reset_input_buffer()
+                offset = 0
+                self.ser.timeout = 2.0
 
-                # Send frame data
-                self.ser.write(payload)
-                self.ser.flush()
-
-                # Wait for ACK from C64
-                self.ser.timeout = 2.0 # Shorter timeout for active streaming
-                ack = self.ser.read(1)
-                if len(ack) == 1 and ack[0] == 0xFF:
-                    return True
-                else:
-                    if ack:
-                        print(f"Frame ACK failed (got: {ack.hex()})")
+                while offset < len(payload):
+                    # Read chunk request from C64 (2 bytes LE)
+                    req = self.ser.read(2)
+                    if len(req) < 2:
+                        print(f"Chunk request timeout at offset {offset}. C64 might be deadlocked waiting for RX.")
+                        if offset == 0:
+                            print("Assuming C64 already requested first 2 bytes. Pushing them to unblock...")
+                            chunk_size = 2
+                        else:
+                            return False
                     else:
-                        print("Frame ACK timeout")
-                    # On failure, reset buffers to try and recover sync
-                    self.ser.reset_input_buffer()
-                    self.ser.reset_output_buffer()
-                    return False
+                        chunk_size = req[0] + req[1] * 256
+                        
+                    if chunk_size == 0:
+                        print("C64 requested 0 bytes? Ignoring and trying again...")
+                        continue
+                        
+                    remaining = len(payload) - offset
+                    actual_size = min(chunk_size, remaining)
+                    chunk = payload[offset:offset+actual_size]
+                    
+                    # Send actual size
+                    self.ser.write(bytes([actual_size & 0xFF, (actual_size >> 8) & 0xFF]))
+                    # Send chunk
+                    self.ser.write(chunk)
+                    self.ser.flush()
+                    
+                    offset += actual_size
+
+                return True
 
             except Exception as e:
                 print(f"Stream frame failed: {e}")
-                # self.viewer_running = False # Don't stop on single error
                 return False
 
     def reset_to_menu(self):
@@ -556,11 +593,13 @@ class WebSocketServer:
                 }))
 
             elif command == 'send_viewer':
+                loop = asyncio.get_event_loop()
+                success = await loop.run_in_executor(None, self.kff.send_viewer_prg, "kungfu_viewer.prg")
                 await websocket.send(json.dumps({
                     'type': 'response',
                     'command': 'send_viewer',
-                    'success': True,
-                    'message': 'Viewer must be started manually on C64. Ready to stream!'
+                    'success': success,
+                    'message': 'Viewer sent successfully and is running!' if success else 'Failed to send viewer. Ensure KFF is in menu.'
                 }))
 
             elif command == 'status':
@@ -625,7 +664,7 @@ async def main():
     print("=" * 60)
     print("Kung Fu Flash Streaming Server")
     print("=" * 60)
-    print(f"Streamer PRG size: {len(STREAMER_PRG)} bytes")
+    print(f"Streamer CRT size: {len(STREAMER_CRT)} bytes")
     print()
 
     # Show available ports

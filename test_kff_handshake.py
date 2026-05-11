@@ -26,6 +26,8 @@ def run_test():
     
     try:
         ser = serial.Serial(port, 115200, timeout=2)
+        ser.dtr = True
+        ser.rts = True
         # Flush
         ser.reset_input_buffer()
         ser.reset_output_buffer()
@@ -34,13 +36,17 @@ def run_test():
         return
 
     print("--- Handshake Test ---")
-    print("This test works with the existing 'kungfu_viewer.prg'.")
+    print("This test works with the updated 'kungfu_viewer.prg'.")
     print("Please make sure 'kungfu_viewer.prg' is RUNNING on your C64.")
-    print("It should be waiting to send an ACK ($FF).")
+    print("The border should be flashing.")
     print()
 
     try:
         while True:
+            print("Sending Connect byte (0xFF)...")
+            ser.write(b'\xFF')
+            ser.flush()
+            
             print("Reading 1 byte (waiting for ACK $FF)... ", end="", flush=True)
             ack = ser.read(1)
             if len(ack) == 1:

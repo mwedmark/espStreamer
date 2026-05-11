@@ -88,6 +88,16 @@ async function downloadKFFViewer() {
   kungFuWebSocket.send(JSON.stringify({command: 'get_viewer'}));
 }
 
+async function sendKFFViewer() {
+  if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
+    alert('Not connected to Kung Fu Flash server. Please click Connect first.');
+    return;
+  }
+  
+  updateKungFuStatus('Sending Viewer PRG to C64...', true);
+  kungFuWebSocket.send(JSON.stringify({command: 'send_viewer'}));
+}
+
 function toggleViceMode() {
   kungFuViceMode = !kungFuViceMode;
   const modeText = kungFuViceMode ? 'VICE Mode' : 'Hardware Mode';

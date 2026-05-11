@@ -12,7 +12,7 @@ def build_mini_prg():
     code += [0xA9, 0x35]        # LDA #$35
     code += [0x85, 0x01]        # STA $01
     # $0812:
-    code += [0xAD, 0x08, 0xDE]  # LDA $DE08 (Blind Read)
+    code += [0xAD, 0x0A, 0xDE]  # LDA $DE0A (KFF Data Read)
     code += [0x8D, 0x20, 0xD0]  # STA $D020 (Border)
     code += [0x4C, 0x12, 0x08]  # JMP $0812
     return bytes(code)
