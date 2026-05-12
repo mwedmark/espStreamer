@@ -1,5 +1,9 @@
 # espStreamer
-Arduino-based project for CHrome/ESP32-S3 to make it handle a live stream and convert it to C64 compatible image 
+Arduino-based project for Chrome/ESP32-S3 to make it handle a live stream and convert it to C64 compatible image.
+The solution uses a webapp for control/view from webbrowser and also uses Python script where applicable.
+It is also possible to run this without a ESP32. In this case only python and webbrowser is needed.
+Best performance is given in the non-ESP32 solution, because then your powerful PC does all the work.
+The ESP32 solution gives a more mobile solution that can be closer to C64, maybe like a cartridge.
 
 Prereq:
 - Windows (because of powershell)
