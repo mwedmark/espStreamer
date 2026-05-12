@@ -48,6 +48,21 @@ def _build_streamer_code(base_addr):
     code += [0xD8] # CLD
     code += [0xA9, 0x35, 0x85, 0x01] # I/O visible
 
+    # Set CIA2 data direction: bits 0-1 as output for VIC bank select
+    code += [0xAD, 0x02, 0xDD] # LDA $DD02
+    code += [0x09, 0x03]       # ORA #$03
+    code += [0x8D, 0x02, 0xDD] # STA $DD02
+
+    # Set VIC to bank 0 ($0000-$3FFF): DD00 bits 0-1 = 11
+    code += [0xAD, 0x00, 0xDD] # LDA $DD00
+    code += [0x09, 0x03]       # ORA #$03
+    code += [0x8D, 0x00, 0xDD] # STA $DD00
+
+    # Double buffer flag at $03:
+    #   0 = displaying bank 0, next write goes to bank 1 (back)
+    #   1 = displaying bank 1, next write goes to bank 0 (back)
+    code += [0xA9, 0x00, 0x85, 0x03] # LDA #0; STA $03
+
     # Define jump over subroutines
     jmp_start = base_addr + len(code)
     code += [0x4C, 0x00, 0x00] # JMP main_loop
@@ -117,7 +132,10 @@ def _build_streamer_code(base_addr):
     # end
     code += [0x60] # RTS
 
-    # --- Main Loop ---
+    # --- Main Loop (Double Buffered) ---
+    # Bank 0: Bitmap $2000, Screen $0400
+    # Bank 1: Bitmap $6000, Screen $4400
+    # Color RAM $D800 is hardware-fixed (always same)
     main_loop_addr = base_addr + len(code)
     # Patch JMP over subroutines
     code[jmp_start - base_addr + 1] = main_loop_addr & 0xFF
@@ -128,20 +146,43 @@ def _build_streamer_code(base_addr):
     code += [0xA9, 0x02, 0x85, 0xFD] # $FD = $02
     code += [0xA2, 0x02, 0xA0, 0x00] # X = 2, Y = 0 (2 bytes)
     code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
-    
-    # Read Bitmap (8000 bytes) -> $2000
+
+    # Determine back buffer based on flag at $03
+    # $06 = bitmap dest high byte, $07 = screen dest high byte
+    code += [0xA5, 0x03]       # LDA $03
+    bne_bank0 = base_addr + len(code)
+    code += [0xD0, 0x00]       # BNE write_bank0 (patch later)
+
+    # Flag=0: displaying bank 0, write to bank 1
+    code += [0xA9, 0x60, 0x85, 0x06] # LDA #$60; STA $06 (bitmap -> $6000)
+    code += [0xA9, 0x44, 0x85, 0x07] # LDA #$44; STA $07 (screen -> $4400)
+    jmp_do_reads = base_addr + len(code)
+    code += [0x4C, 0x00, 0x00]       # JMP do_reads (patch later)
+
+    # write_bank0: Flag=1, displaying bank 1, write to bank 0
+    write_bank0_addr = base_addr + len(code)
+    code[bne_bank0 - base_addr + 1] = (write_bank0_addr - (bne_bank0 + 2)) & 0xFF
+    code += [0xA9, 0x20, 0x85, 0x06] # LDA #$20; STA $06 (bitmap -> $2000)
+    code += [0xA9, 0x04, 0x85, 0x07] # LDA #$04; STA $07 (screen -> $0400)
+
+    # do_reads:
+    do_reads_addr = base_addr + len(code)
+    code[jmp_do_reads - base_addr + 1] = do_reads_addr & 0xFF
+    code[jmp_do_reads - base_addr + 2] = (do_reads_addr >> 8) & 0xFF
+
+    # Read Bitmap (8000 bytes) -> dest from $06
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
-    code += [0xA9, 0x20, 0x85, 0xFD] # $FD = $20
+    code += [0xA5, 0x06, 0x85, 0xFD] # LDA $06; STA $FD
     code += [0xA2, 0x40, 0xA0, 0x1F] # X = $40, Y = $1F (8000 bytes)
     code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
 
-    # Read Screen (1000 bytes) -> $0400
+    # Read Screen (1000 bytes) -> dest from $07
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
-    code += [0xA9, 0x04, 0x85, 0xFD] # $FD = $04
+    code += [0xA5, 0x07, 0x85, 0xFD] # LDA $07; STA $FD
     code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
     code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
 
-    # Read Color (1000 bytes) -> $D800
+    # Read Color (1000 bytes) -> $D800 (hardware-fixed, always same)
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA9, 0xD8, 0x85, 0xFD] # $FD = $D8
     code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
@@ -151,29 +192,44 @@ def _build_streamer_code(base_addr):
     code += [0xAD, 0x01, 0x02] # LDA $0201 (bg_color)
     code += [0x8D, 0x21, 0xD0] # STA $D021
     code += [0x8D, 0x20, 0xD0] # STA $D020 (border = bg_color)
-    
+
     code += [0xAD, 0x00, 0x02] # LDA $0200 (mode)
     code += [0xC9, 0x00] # CMP #$00 (0 = Multicolor)
-    
+
     apply_multi_addr = base_addr + len(code)
     code += [0xF0, 0x00] # BEQ apply_multi (patch later)
-    
+
     # Hires mode
-    code += [0xA9, 0x3B, 0x8D, 0x11, 0xD0] # STA $D011
-    code += [0xA9, 0x08, 0x8D, 0x16, 0xD0] # STA $D016
-    code += [0xA9, 0x18, 0x8D, 0x18, 0xD0] # STA $D018
-    
-    jmp_loop_addr = base_addr + len(code)
-    code += [0x4C, main_loop_addr & 0xFF, (main_loop_addr >> 8) & 0xFF] # JMP main_loop
-    
+    code += [0xA9, 0x3B, 0x8D, 0x11, 0xD0] # LDA #$3B; STA $D011
+    code += [0xA9, 0x08, 0x8D, 0x16, 0xD0] # LDA #$08; STA $D016
+    code += [0xA9, 0x18, 0x8D, 0x18, 0xD0] # LDA #$18; STA $D018
+
+    jmp_flip_addr = base_addr + len(code)
+    code += [0x4C, 0x00, 0x00] # JMP do_flip (patch later)
+
     # apply_multi
     patched_multi_addr = base_addr + len(code)
     code[apply_multi_addr - base_addr + 1] = (patched_multi_addr - (apply_multi_addr + 2)) & 0xFF
-    
-    code += [0xA9, 0x3B, 0x8D, 0x11, 0xD0] # STA $D011
-    code += [0xA9, 0x18, 0x8D, 0x16, 0xD0] # STA $D016 (multicolor)
-    code += [0xA9, 0x18, 0x8D, 0x18, 0xD0] # STA $D018
-    
+
+    code += [0xA9, 0x3B, 0x8D, 0x11, 0xD0] # LDA #$3B; STA $D011
+    code += [0xA9, 0x18, 0x8D, 0x16, 0xD0] # LDA #$18; STA $D016 (multicolor)
+    code += [0xA9, 0x18, 0x8D, 0x18, 0xD0] # LDA #$18; STA $D018
+
+    # do_flip: Flip VIC bank and toggle buffer flag
+    do_flip_addr = base_addr + len(code)
+    code[jmp_flip_addr - base_addr + 1] = do_flip_addr & 0xFF
+    code[jmp_flip_addr - base_addr + 2] = (do_flip_addr >> 8) & 0xFF
+
+    # Toggle bit 0 of DD00: 11 (bank 0) <-> 10 (bank 1)
+    code += [0xAD, 0x00, 0xDD] # LDA $DD00
+    code += [0x49, 0x01]       # EOR #$01
+    code += [0x8D, 0x00, 0xDD] # STA $DD00
+
+    # Toggle buffer flag
+    code += [0xA5, 0x03]       # LDA $03
+    code += [0x49, 0x01]       # EOR #$01
+    code += [0x85, 0x03]       # STA $03
+
     # JMP main_loop
     code += [0x4C, main_loop_addr & 0xFF, (main_loop_addr >> 8) & 0xFF]
 
