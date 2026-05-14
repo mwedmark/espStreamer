@@ -39,6 +39,35 @@ def add_rel(code, opcode, target_addr, current_addr):
         raise ValueError(f"Branch out of range: {disp}")
     code += [opcode, disp & 0xFF]
 
+def rle_compress(data):
+    """PackBits-style RLE: $00-$7F=literal(N+1), $80-$FF=repeat(N-126)."""
+    result = bytearray()
+    i, n = 0, len(data)
+    while i < n:
+        # Check for run of 2+ identical bytes
+        if i + 1 < n and data[i] == data[i + 1]:
+            val = data[i]
+            run = 1
+            while i + run < n and run < 129 and data[i + run] == val:
+                run += 1
+            result.append(run + 126)  # $80-$FF
+            result.append(val)
+            i += run
+        else:
+            # Literal run
+            start = i
+            while i < n and (i - start) < 128:
+                if i + 1 < n and data[i] == data[i + 1]:
+                    break
+                i += 1
+            lit_len = i - start
+            if lit_len == 0:
+                lit_len = 1
+                i += 1
+            result.append(lit_len - 1)  # $00-$7F
+            result.extend(data[start:start + lit_len])
+    return bytes(result)
+
 def _build_streamer_code(base_addr):
     """Build the C64 streamer machine code using EasyFlash 3 chunked request protocol."""
     code = []
@@ -46,7 +75,7 @@ def _build_streamer_code(base_addr):
     # --- Machine Code Start ---
     code += [0x78] # SEI
     code += [0xD8] # CLD
-    code += [0xA9, 0x35, 0x85, 0x01] # I/O visible
+    code += [0xA9, 0x35, 0x85, 0x01] # I/O + cartridge visible, BASIC ROM off (RAM at $A000)
 
     # Set CIA2 data direction: bits 0-1 as output for VIC bank select
     code += [0xAD, 0x02, 0xDD] # LDA $DD02
@@ -132,6 +161,107 @@ def _build_streamer_code(base_addr):
     # end
     code += [0x60] # RTS
 
+    # --- Subroutine: rle_decode ---
+    # Decodes PackBits RLE from $F8/$F9 (src) to $FC/$FD (dest)
+    # Input: X = uncomp_size_lo, Y = uncomp_size_hi
+    # Format: $00-$7F = literal(N+1 bytes), $80-$FF = repeat(N-126 times)
+    rle_decode_addr = base_addr + len(code)
+
+    # Negate output size for countdown counter in $08/$09
+    code += [0x8A]                   # TXA
+    code += [0x49, 0xFF]             # EOR #$FF
+    code += [0x85, 0x08]             # STA $08
+    code += [0x98]                   # TYA
+    code += [0x49, 0xFF]             # EOR #$FF
+    code += [0x85, 0x09]             # STA $09
+    code += [0xA0, 0x00]             # LDY #0 (dest index)
+
+    # inc_out: one's complement -> two's complement
+    code += [0xE6, 0x08]             # INC $08
+    rle_bne_token1 = len(code)
+    code += [0xD0, 0x00]             # BNE rle_token (patch)
+    code += [0xE6, 0x09]             # INC $09
+    rle_bne_token2 = len(code)
+    code += [0xD0, 0x00]             # BNE rle_token (patch)
+    code += [0x60]                   # RTS (size was 0)
+
+    # rle_token: read control byte from source
+    rle_token_addr = base_addr + len(code)
+    code[rle_bne_token1 + 1] = (rle_token_addr - (base_addr + rle_bne_token1 + 2)) & 0xFF
+    code[rle_bne_token2 + 1] = (rle_token_addr - (base_addr + rle_bne_token2 + 2)) & 0xFF
+
+    code += [0x84, 0x0B]             # STY $0B (save dest Y)
+    code += [0xA0, 0x00]             # LDY #0
+    code += [0xB1, 0xF8]             # LDA ($F8),Y
+    code += [0xE6, 0xF8]             # INC $F8
+    code += [0xD0, 0x02]             # BNE +2
+    code += [0xE6, 0xF9]             # INC $F9
+    # Test bit 7 of token reliably using CMP #$80 (immune to INC side-effects)
+    code += [0xC9, 0x80]             # CMP #$80
+    rle_bcs_repeat = len(code)
+    code += [0xB0, 0x00]             # BCS rle_repeat (patch)
+
+    # Literal run: A+1 bytes
+    code += [0xA4, 0x0B]             # LDY $0B (restore dest Y)
+    code += [0xAA]                   # TAX
+    code += [0xE8]                   # INX (count 1-128)
+
+    rle_lit_addr = base_addr + len(code)
+    code += [0x84, 0x0B]             # STY $0B
+    code += [0xA0, 0x00]             # LDY #0
+    code += [0xB1, 0xF8]             # LDA ($F8),Y
+    code += [0xE6, 0xF8]             # INC $F8
+    code += [0xD0, 0x02]             # BNE +2
+    code += [0xE6, 0xF9]             # INC $F9
+    code += [0xA4, 0x0B]             # LDY $0B
+    code += [0x91, 0xFC]             # STA ($FC),Y
+    code += [0xC8]                   # INY
+    code += [0xD0, 0x02]             # BNE +2
+    code += [0xE6, 0xFD]             # INC $FD
+    code += [0xE6, 0x08]             # INC $08
+    code += [0xD0, 0x04]             # BNE +4
+    code += [0xE6, 0x09]             # INC $09
+    rle_beq_ret1 = len(code)
+    code += [0xF0, 0x00]             # BEQ rle_ret (patch)
+    code += [0xCA]                   # DEX
+    add_rel(code, 0xD0, rle_lit_addr, base_addr + len(code))  # BNE rle_lit
+    code += [0x4C, rle_token_addr & 0xFF, (rle_token_addr >> 8) & 0xFF]  # JMP rle_token
+
+    # Repeat: A=$80-$FF, count = A - 126
+    rle_repeat_addr = base_addr + len(code)
+    code[rle_bcs_repeat + 1] = (rle_repeat_addr - (base_addr + rle_bcs_repeat + 2)) & 0xFF
+    code += [0xA4, 0x0B]             # LDY $0B (restore dest Y)
+    code += [0x38]                   # SEC
+    code += [0xE9, 0x7E]             # SBC #126
+    code += [0xAA]                   # TAX (count 2-129)
+    code += [0x84, 0x0B]             # STY $0B
+    code += [0xA0, 0x00]             # LDY #0
+    code += [0xB1, 0xF8]             # LDA ($F8),Y
+    code += [0xE6, 0xF8]             # INC $F8
+    code += [0xD0, 0x02]             # BNE +2
+    code += [0xE6, 0xF9]             # INC $F9
+    code += [0xA4, 0x0B]             # LDY $0B
+
+    rle_fill_addr = base_addr + len(code)
+    code += [0x91, 0xFC]             # STA ($FC),Y
+    code += [0xC8]                   # INY
+    code += [0xD0, 0x02]             # BNE +2
+    code += [0xE6, 0xFD]             # INC $FD
+    code += [0xE6, 0x08]             # INC $08
+    code += [0xD0, 0x04]             # BNE +4
+    code += [0xE6, 0x09]             # INC $09
+    rle_beq_ret2 = len(code)
+    code += [0xF0, 0x00]             # BEQ rle_ret (patch)
+    code += [0xCA]                   # DEX
+    add_rel(code, 0xD0, rle_fill_addr, base_addr + len(code))  # BNE rle_fill
+    code += [0x4C, rle_token_addr & 0xFF, (rle_token_addr >> 8) & 0xFF]  # JMP rle_token
+
+    # rle_ret:
+    rle_ret_addr = base_addr + len(code)
+    code[rle_beq_ret1 + 1] = (rle_ret_addr - (base_addr + rle_beq_ret1 + 2)) & 0xFF
+    code[rle_beq_ret2 + 1] = (rle_ret_addr - (base_addr + rle_beq_ret2 + 2)) & 0xFF
+    code += [0x60]                   # RTS
+
     # --- Main Loop (Double Buffered) ---
     # Bank 0: Bitmap $2000, Screen $0400
     # Bank 1: Bitmap $6000, Screen $4400
@@ -170,23 +300,48 @@ def _build_streamer_code(base_addr):
     code[jmp_do_reads - base_addr + 1] = do_reads_addr & 0xFF
     code[jmp_do_reads - base_addr + 2] = (do_reads_addr >> 8) & 0xFF
 
-    # Read Bitmap (8000 bytes) -> dest from $06
-    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
-    code += [0xA5, 0x06, 0x85, 0xFD] # LDA $06; STA $FD
-    code += [0xA2, 0x40, 0xA0, 0x1F] # X = $40, Y = $1F (8000 bytes)
-    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
+    # --- Helper: fread comp_size, fread data to $0C00, rle_decode to dest ---
+    # Temp buffer at $0C00 (guaranteed RAM, no cartridge overlay)
+    TEMP_BUF_HI = 0x0C
 
-    # Read Screen (1000 bytes) -> dest from $07
-    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
-    code += [0xA5, 0x07, 0x85, 0xFD] # LDA $07; STA $FD
-    code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
-    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
+    def emit_rle_segment(dest_hi_is_zp, dest_hi_val, uncomp_lo, uncomp_hi):
+        """Emit code to: fread(2) comp_size, fread(comp_size) to $0C00, rle_decode to dest."""
+        # Save uncomp size
+        code.extend([0xA2, uncomp_lo, 0xA0, uncomp_hi])  # LDX #lo; LDY #hi
+        code.extend([0x86, 0x0C, 0x84, 0x0D])            # STX $0C; STY $0D
 
-    # Read Color (1000 bytes) -> $D800 (hardware-fixed, always same)
-    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
-    code += [0xA9, 0xD8, 0x85, 0xFD] # $FD = $D8
-    code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
-    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
+        # fread(2) to get comp_size -> $0204/$0205
+        code.extend([0xA9, 0x04, 0x85, 0xFC])  # STA $FC = $04
+        code.extend([0xA9, 0x02, 0x85, 0xFD])  # STA $FD = $02
+        code.extend([0xA2, 0x02, 0xA0, 0x00])  # X=2, Y=0
+        code.extend([0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF])
+
+        # fread(comp_size) -> temp buffer $0C00
+        code.extend([0xA9, 0x00, 0x85, 0xFC])  # STA $FC = $00
+        code.extend([0xA9, TEMP_BUF_HI, 0x85, 0xFD])  # STA $FD = $0C
+        code.extend([0xAE, 0x04, 0x02])        # LDX $0204 (comp_size_lo)
+        code.extend([0xAC, 0x05, 0x02])        # LDY $0205 (comp_size_hi)
+        code.extend([0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF])
+
+        # Setup rle_decode: src=$0C00, dest from parameter
+        code.extend([0xA9, 0x00, 0x85, 0xF8])  # STA $F8 = $00
+        code.extend([0xA9, TEMP_BUF_HI, 0x85, 0xF9])  # STA $F9 = $0C
+        code.extend([0xA9, 0x00, 0x85, 0xFC])  # STA $FC = $00
+        if dest_hi_is_zp:
+            code.extend([0xA5, dest_hi_val, 0x85, 0xFD])
+        else:
+            code.extend([0xA9, dest_hi_val, 0x85, 0xFD])
+        code.extend([0xA6, 0x0C, 0xA4, 0x0D])  # LDX $0C; LDY $0D
+        code.extend([0x20, rle_decode_addr & 0xFF, (rle_decode_addr >> 8) & 0xFF])
+
+    # Bitmap: dest from $06, 8000 bytes ($1F40)
+    emit_rle_segment(True, 0x06, 0x40, 0x1F)
+
+    # Screen: dest from $07, 1000 bytes ($03E8)
+    emit_rle_segment(True, 0x07, 0xE8, 0x03)
+
+    # Color: dest $D8, 1000 bytes ($03E8)
+    emit_rle_segment(False, 0xD8, 0xE8, 0x03)
 
     # Apply VIC Settings
     code += [0xAD, 0x01, 0x02] # LDA $0201 (bg_color)
@@ -477,9 +632,8 @@ class KungFuFlashSerial:
             print("Streamer PRG sent successfully!")
             print("Kung Fu Flash has now launched the PRG.")
             print("Waiting for frames...")
-            time.sleep(0.5)
-            self.ser.reset_input_buffer()
             self.viewer_running = True
+            self._first_frame = True
             return True
 
         except Exception as e:
@@ -489,51 +643,92 @@ class KungFuFlashSerial:
             return False
 
     def stream_frame(self, mode, bg_color, bitmap, screen, color):
-        """Stream a single frame to the C64 viewer using chunked flow."""
+        """Stream a single RLE-compressed frame to the C64 viewer."""
         if not self.ser or not self.viewer_running:
             return False
 
         with self.lock:
             try:
-                # Payload is exactly 10002 bytes
-                payload = bytes([mode & 0xFF, bg_color & 0xFF])
-                payload += bytes(bitmap[:8000])
-                payload += bytes(screen[:1000])
-                payload += bytes(color[:1000])
+                # Compress each segment
+                bmp_data = bytes(bitmap[:8000])
+                scr_data = bytes(screen[:1000])
+                col_data = bytes(color[:1000])
+                while len(bmp_data) < 8000: bmp_data += b'\x00'
+                while len(scr_data) < 1000: scr_data += b'\x00'
+                while len(col_data) < 1000: col_data += b'\x00'
 
-                while len(payload) < 10002:
-                    payload += b'\x00'
+                bmp_comp = rle_compress(bmp_data)
+                scr_comp = rle_compress(scr_data)
+                col_comp = rle_compress(col_data)
 
-                offset = 0
-                self.ser.timeout = 2.0
+                total_raw = 10002
+                total_comp = 2 + len(bmp_comp) + len(scr_comp) + len(col_comp)
+                ratio = total_comp * 100 // total_raw
+                print(f"RLE: {total_raw}>{total_comp} ({ratio}%) bmp={len(bmp_comp)} scr={len(scr_comp)} col={len(col_comp)}")
 
-                while offset < len(payload):
-                    # Read chunk request from C64 (2 bytes LE)
+                # Protocol:
+                # 1. C64 does fread(2) for mode+bg (standard chunk request)
+                # 2. For each segment: C64 sends ready signal [FF,FF],
+                #    server streams compressed bytes directly
+
+                # Step 1: Wait for fread(2) request for mode+bg
+                # On first frame after PRG load, skip stale EFSTART bytes
+                # by reading 2-byte pairs until we get the fread(2) request [02,00]
+                if getattr(self, '_first_frame', False):
+                    self._first_frame = False
+                    self.ser.timeout = 5.0
+                    for _attempt in range(10):
+                        req = self.ser.read(2)
+                        if len(req) < 2:
+                            print("Timeout waiting for mode+bg request.")
+                            return False
+                        chunk_size = req[0] + req[1] * 256
+                        if chunk_size == 2:
+                            print(f"  mode+bg: req={chunk_size}")
+                            break
+                        print(f"  Skipped stale bytes: {req.hex()}")
+                    else:
+                        print("Too many stale bytes, giving up.")
+                        return False
+                else:
+                    self.ser.timeout = 5.0
                     req = self.ser.read(2)
                     if len(req) < 2:
-                        print(f"Chunk request timeout at offset {offset}. C64 might be deadlocked waiting for RX.")
-                        if offset == 0:
-                            print("Assuming C64 already requested first 2 bytes. Pushing them to unblock...")
-                            chunk_size = 2
-                        else:
-                            return False
-                    else:
-                        chunk_size = req[0] + req[1] * 256
-                        
+                        print("Timeout waiting for mode+bg request.")
+                        return False
+                    chunk_size = req[0] + req[1] * 256
+                    print(f"  mode+bg: req={chunk_size}")
+
+                # Send actual_size + mode+bg
+                mode_bg = bytes([mode & 0xFF, bg_color & 0xFF])
+                self.ser.write(bytes([len(mode_bg) & 0xFF, (len(mode_bg) >> 8) & 0xFF]))
+                self.ser.write(mode_bg)
+                self.ser.flush()
+
+                # Build remaining payload: [comp_size, comp_data] * 3
+                payload = b''
+                payload += struct.pack('<H', len(bmp_comp)) + bmp_comp
+                payload += struct.pack('<H', len(scr_comp)) + scr_comp
+                payload += struct.pack('<H', len(col_comp)) + col_comp
+
+                offset = 0
+                while offset < len(payload):
+                    self.ser.timeout = 5.0
+                    req = self.ser.read(2)
+                    if len(req) < 2:
+                        print(f"  Chunk timeout at payload offset {offset}")
+                        return False
+                    chunk_size = req[0] + req[1] * 256
                     if chunk_size == 0:
-                        print("C64 requested 0 bytes? Ignoring and trying again...")
                         continue
-                        
+
                     remaining = len(payload) - offset
                     actual_size = min(chunk_size, remaining)
                     chunk = payload[offset:offset+actual_size]
-                    
-                    # Send actual size
+
                     self.ser.write(bytes([actual_size & 0xFF, (actual_size >> 8) & 0xFF]))
-                    # Send chunk
                     self.ser.write(chunk)
                     self.ser.flush()
-                    
                     offset += actual_size
 
                 return True
