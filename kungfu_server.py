@@ -126,37 +126,74 @@ def _build_streamer_code(base_addr):
     
     code += [0x8A] # TXA
     
-    # ef3usb_read_common
+    # ef3usb_read_common (Optimized 4x Unrolled Hybrid Burst Loop with SMC)
     common_addr = base_addr + len(code)
     
-    code += [0x49, 0xFF, 0xAA] # EOR #$FF, TAX
-    code += [0x98, 0x49, 0xFF, 0x85, 0xFE] # TYA, EOR #$FF, STA $FE (m_size_hi)
-    code += [0xA0, 0x00] # LDY #0
+    # 1. Divide actual_size in Y:X by 4 to get burst count
+    code += [
+        0x98, 0x4A, 0xA8, 0x8A, 0x6A, 0xAA, # TYA; LSR; TAY; TXA; ROR; TAX
+        0x98, 0x4A, 0xA8, 0x8A, 0x6A, 0xAA  # TYA; LSR; TAY; TXA; ROR; TAX
+    ]
+    
+    # Save array index for SMC address setup code
+    setup_idx = len(code)
+    # Reserve 28 bytes for SMC address setup instructions
+    code.extend([0x00] * 28)
+    
+    # Setup loop tracking variables
+    code += [0x8A, 0x49, 0xFF, 0xAA]       # TXA, EOR #$FF, TAX
+    code += [0x98, 0x49, 0xFF, 0x85, 0xFE] # TYA, EOR #$FF, STA $FE
+    code += [0xA0, 0x00]                   # LDY #0
     jmp_inc_fwd = len(code)
-    code += [0x4C, 0x00, 0x00] # JMP incCounter
+    code += [0x4C, 0x00, 0x00]             # JMP incCounter
     
-    # getBytes
+    # getBytes (4x Unrolled Burst)
     get_bytes_addr = base_addr + len(code)
-    wait_rx_3 = base_addr + len(code)
-    code += [0x2C, 0x09, 0xDE] # BIT $DE09
-    add_rel(code, 0x10, wait_rx_3, base_addr + len(code)) # BPL
-    code += [0xAD, 0x0A, 0xDE] # LDA $DE0A
-    code += [0x91, 0xFC] # STA ($FC),Y
-    code += [0xC8] # INY
-    bne_inc_fwd = len(code)
-    code += [0xD0, 0x00] # BNE incCounter
-    code += [0xE6, 0xFD] # INC $FD
+    smc_addrs = []
+    for _b in range(4):
+        wait_rx = base_addr + len(code)
+        code += [0x2C, 0x09, 0xDE] # BIT $DE09
+        add_rel(code, 0x10, wait_rx, base_addr + len(code)) # BPL wait_rx
+        code += [0xAD, 0x0A, 0xDE] # LDA $DE0A
+        smc_addrs.append(base_addr + len(code))
+        code += [0x99, 0x00, 0x0C] # STA abs,Y (dummy base, overwritten by setup)
+        code += [0xC8]             # INY
+        
+    # Check page crossing
+    code += [0xC0, 0x00] # CPY #0
+    bne_skip_page = len(code)
+    code += [0xD0, 0x00] # BNE incCounter (patch later)
     
+    # Increment high byte of all 4 STA instructions via SMC
+    for smc_addr in smc_addrs:
+        hi_addr = smc_addr + 2
+        code += [0xEE, hi_addr & 0xFF, (hi_addr >> 8) & 0xFF] # INC hi_addr
+        
     # incCounter
     inc_counter_addr = base_addr + len(code)
     code[jmp_inc_fwd + 1] = inc_counter_addr & 0xFF
     code[jmp_inc_fwd + 2] = (inc_counter_addr >> 8) & 0xFF
-    code[bne_inc_fwd + 1] = (inc_counter_addr - (base_addr + bne_inc_fwd + 2)) & 0xFF
+    code[bne_skip_page + 1] = (inc_counter_addr - (base_addr + bne_skip_page + 2)) & 0xFF
     
     code += [0xE8] # INX
     add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE getBytes
     code += [0xE6, 0xFE] # INC $FE
     add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE getBytes
+    
+    # Patch the reserved SMC setup bytes now that smc_addrs are deterministic
+    setup_bytes = []
+    setup_bytes.extend([0xA5, 0xFC]) # LDA $FC
+    for smc_addr in smc_addrs:
+        lo_addr = smc_addr + 1
+        setup_bytes.extend([0x8D, lo_addr & 0xFF, (lo_addr >> 8) & 0xFF]) # STA lo_addr
+        
+    setup_bytes.extend([0xA5, 0xFD]) # LDA $FD
+    for smc_addr in smc_addrs:
+        hi_addr = smc_addr + 2
+        setup_bytes.extend([0x8D, hi_addr & 0xFF, (hi_addr >> 8) & 0xFF]) # STA hi_addr
+        
+    assert len(setup_bytes) == 28
+    code[setup_idx : setup_idx+28] = setup_bytes
     
     # end
     code += [0x60] # RTS
@@ -271,10 +308,10 @@ def _build_streamer_code(base_addr):
     code[jmp_start - base_addr + 1] = main_loop_addr & 0xFF
     code[jmp_start - base_addr + 2] = (main_loop_addr >> 8) & 0xFF
 
-    # Read Mode and BG color (2 bytes) -> $0200
+    # Read Mode and BG color (padded 4-byte burst) -> $0200
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA9, 0x02, 0x85, 0xFD] # $FD = $02
-    code += [0xA2, 0x02, 0xA0, 0x00] # X = 2, Y = 0 (2 bytes)
+    code += [0xA2, 0x04, 0xA0, 0x00] # X = 4, Y = 0 (4 bytes aligned burst)
     code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
 
     # Determine back buffer based on flag at $03
@@ -310,10 +347,10 @@ def _build_streamer_code(base_addr):
         code.extend([0xA2, uncomp_lo, 0xA0, uncomp_hi])  # LDX #lo; LDY #hi
         code.extend([0x86, 0x0C, 0x84, 0x0D])            # STX $0C; STY $0D
 
-        # fread(2) to get comp_size -> $0204/$0205
+        # fread(4) to get padded comp_size header -> $0204/$0205
         code.extend([0xA9, 0x04, 0x85, 0xFC])  # STA $FC = $04
         code.extend([0xA9, 0x02, 0x85, 0xFD])  # STA $FD = $02
-        code.extend([0xA2, 0x02, 0xA0, 0x00])  # X=2, Y=0
+        code.extend([0xA2, 0x04, 0xA0, 0x00])  # X=4, Y=0 (4 bytes aligned burst)
         code.extend([0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF])
 
         # fread(comp_size) -> temp buffer pointed by $0A
@@ -661,19 +698,21 @@ class KungFuFlashSerial:
                 scr_comp = rle_compress(scr_data)
                 col_comp = rle_compress(col_data)
 
+                # Ensure all compressed segments are multiples of 4 bytes for unrolled burst compatibility
+                while len(bmp_comp) % 4 != 0: bmp_comp += b'\x00'
+                while len(scr_comp) % 4 != 0: scr_comp += b'\x00'
+                while len(col_comp) % 4 != 0: col_comp += b'\x00'
+
                 total_raw = 10002
-                total_comp = 2 + len(bmp_comp) + len(scr_comp) + len(col_comp)
+                total_comp = 4 + len(bmp_comp) + len(scr_comp) + len(col_comp)
                 ratio = total_comp * 100 // total_raw
                 print(f"RLE: {total_raw}>{total_comp} ({ratio}%) bmp={len(bmp_comp)} scr={len(scr_comp)} col={len(col_comp)}")
 
                 # Protocol:
-                # 1. C64 does fread(2) for mode+bg (standard chunk request)
-                # 2. For each segment: C64 sends ready signal [FF,FF],
-                #    server streams compressed bytes directly
-
-                # Step 1: Wait for fread(2) request for mode+bg
+                # 1. C64 does fread(4) for mode+bg (padded 4-byte burst request)
+                # Step 1: Wait for fread(4) request for mode+bg
                 # On first frame after PRG load, skip stale EFSTART bytes
-                # by reading 2-byte pairs until we get the fread(2) request [02,00]
+                # by reading 2-byte pairs until we get the fread(4) request [04,00]
                 if getattr(self, '_first_frame', False):
                     self._first_frame = False
                     self.ser.timeout = 5.0
@@ -683,7 +722,7 @@ class KungFuFlashSerial:
                             print("Timeout waiting for mode+bg request.")
                             return False
                         chunk_size = req[0] + req[1] * 256
-                        if chunk_size == 2:
+                        if chunk_size == 4:
                             print(f"  mode+bg: req={chunk_size}")
                             break
                         print(f"  Skipped stale bytes: {req.hex()}")
@@ -699,17 +738,17 @@ class KungFuFlashSerial:
                     chunk_size = req[0] + req[1] * 256
                     print(f"  mode+bg: req={chunk_size}")
 
-                # Send actual_size + mode+bg
-                mode_bg = bytes([mode & 0xFF, bg_color & 0xFF])
+                # Send actual_size + mode+bg (padded to 4 bytes for burst alignment)
+                mode_bg = bytes([mode & 0xFF, bg_color & 0xFF, 0x00, 0x00])
                 self.ser.write(bytes([len(mode_bg) & 0xFF, (len(mode_bg) >> 8) & 0xFF]))
                 self.ser.write(mode_bg)
                 self.ser.flush()
 
-                # Build remaining payload: [comp_size, comp_data] * 3
+                # Build remaining payload: [comp_size padded to 4B, comp_data] * 3
                 payload = b''
-                payload += struct.pack('<H', len(bmp_comp)) + bmp_comp
-                payload += struct.pack('<H', len(scr_comp)) + scr_comp
-                payload += struct.pack('<H', len(col_comp)) + col_comp
+                payload += struct.pack('<H', len(bmp_comp)) + b'\x00\x00' + bmp_comp
+                payload += struct.pack('<H', len(scr_comp)) + b'\x00\x00' + scr_comp
+                payload += struct.pack('<H', len(col_comp)) + b'\x00\x00' + col_comp
 
                 offset = 0
                 while offset < len(payload):
