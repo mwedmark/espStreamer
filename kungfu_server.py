@@ -284,8 +284,10 @@ def _build_streamer_code(base_addr):
     code += [0xD0, 0x00]       # BNE write_bank0 (patch later)
 
     # Flag=0: displaying bank 0, write to bank 1
+    # Store dynamic temp buffer page in $0A to guarantee zero visual overlap
     code += [0xA9, 0x60, 0x85, 0x06] # LDA #$60; STA $06 (bitmap -> $6000)
     code += [0xA9, 0x44, 0x85, 0x07] # LDA #$44; STA $07 (screen -> $4400)
+    code += [0xA9, 0x48, 0x85, 0x0A] # LDA #$48; STA $0A (temp -> $4800 free space in Bank 1)
     jmp_do_reads = base_addr + len(code)
     code += [0x4C, 0x00, 0x00]       # JMP do_reads (patch later)
 
@@ -294,18 +296,16 @@ def _build_streamer_code(base_addr):
     code[bne_bank0 - base_addr + 1] = (write_bank0_addr - (bne_bank0 + 2)) & 0xFF
     code += [0xA9, 0x20, 0x85, 0x06] # LDA #$20; STA $06 (bitmap -> $2000)
     code += [0xA9, 0x04, 0x85, 0x07] # LDA #$04; STA $07 (screen -> $0400)
+    code += [0xA9, 0x0C, 0x85, 0x0A] # LDA #$0C; STA $0A (temp -> $0C00 free space in Bank 0)
 
     # do_reads:
     do_reads_addr = base_addr + len(code)
     code[jmp_do_reads - base_addr + 1] = do_reads_addr & 0xFF
     code[jmp_do_reads - base_addr + 2] = (do_reads_addr >> 8) & 0xFF
 
-    # --- Helper: fread comp_size, fread data to $0C00, rle_decode to dest ---
-    # Temp buffer at $0C00 (guaranteed RAM, no cartridge overlay)
-    TEMP_BUF_HI = 0x0C
-
+    # --- Helper: fread comp_size, fread data to dynamic temp buffer, rle_decode to dest ---
     def emit_rle_segment(dest_hi_is_zp, dest_hi_val, uncomp_lo, uncomp_hi):
-        """Emit code to: fread(2) comp_size, fread(comp_size) to $0C00, rle_decode to dest."""
+        """Emit code to: fread(2) comp_size, fread(comp_size) to dynamic temp buffer, rle_decode to dest."""
         # Save uncomp size
         code.extend([0xA2, uncomp_lo, 0xA0, uncomp_hi])  # LDX #lo; LDY #hi
         code.extend([0x86, 0x0C, 0x84, 0x0D])            # STX $0C; STY $0D
@@ -316,16 +316,16 @@ def _build_streamer_code(base_addr):
         code.extend([0xA2, 0x02, 0xA0, 0x00])  # X=2, Y=0
         code.extend([0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF])
 
-        # fread(comp_size) -> temp buffer $0C00
+        # fread(comp_size) -> temp buffer pointed by $0A
         code.extend([0xA9, 0x00, 0x85, 0xFC])  # STA $FC = $00
-        code.extend([0xA9, TEMP_BUF_HI, 0x85, 0xFD])  # STA $FD = $0C
+        code.extend([0xA5, 0x0A, 0x85, 0xFD])  # LDA $0A; STA $FD (dynamic temp buffer)
         code.extend([0xAE, 0x04, 0x02])        # LDX $0204 (comp_size_lo)
         code.extend([0xAC, 0x05, 0x02])        # LDY $0205 (comp_size_hi)
         code.extend([0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF])
 
-        # Setup rle_decode: src=$0C00, dest from parameter
+        # Setup rle_decode: src pointed by $0A, dest from parameter
         code.extend([0xA9, 0x00, 0x85, 0xF8])  # STA $F8 = $00
-        code.extend([0xA9, TEMP_BUF_HI, 0x85, 0xF9])  # STA $F9 = $0C
+        code.extend([0xA5, 0x0A, 0x85, 0xF9])  # LDA $0A; STA $F9 (dynamic temp buffer)
         code.extend([0xA9, 0x00, 0x85, 0xFC])  # STA $FC = $00
         if dest_hi_is_zp:
             code.extend([0xA5, dest_hi_val, 0x85, 0xFD])
