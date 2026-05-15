@@ -203,6 +203,8 @@ async function sendImageToC64() {
 }
 
 let c64StreamInterval = null;
+let kffFpsFrames = 0;
+let kffFpsLastTime = 0;
 
 async function toggleStream() {
   if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
@@ -211,21 +213,31 @@ async function toggleStream() {
   }
 
   const toggleBtn = document.getElementById('stream-toggle-btn');
+  const fpsEl = document.getElementById('kungfu-fps');
 
   if (c64StreamInterval) {
     // We reuse this variable name for the "running" state
     c64StreamInterval = false; 
     if (toggleBtn) toggleBtn.textContent = 'Start Stream';
     updateKungFuStatus('Stream Stopped', true);
+    if (fpsEl) fpsEl.style.display = 'none';
   } else {
     c64StreamInterval = true;
     if (toggleBtn) toggleBtn.textContent = 'Stop Stream';
     updateKungFuStatus('Streaming...', true);
     
+    kffFpsFrames = 0;
+    kffFpsLastTime = Date.now();
+    if (fpsEl) {
+      fpsEl.style.display = 'inline-block';
+      fpsEl.textContent = 'FPS: 0.0';
+    }
+    
     // Start the async loop
     const streamLoop = async () => {
       if (!c64StreamInterval || !kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
         c64StreamInterval = false;
+        if (fpsEl) fpsEl.style.display = 'none';
         return;
       }
       
@@ -251,6 +263,18 @@ async function toggleStream() {
             frameDone,
             new Promise((_, reject) => setTimeout(() => reject('timeout'), 5000))
         ]);
+        
+        // FPS Tracking
+        kffFpsFrames++;
+        const now = Date.now();
+        if (now - kffFpsLastTime >= 1000) {
+          const fps = (kffFpsFrames * 1000 / (now - kffFpsLastTime)).toFixed(1);
+          if (fpsEl) {
+            fpsEl.textContent = `FPS: ${fps}`;
+          }
+          kffFpsFrames = 0;
+          kffFpsLastTime = now;
+        }
         
         // Next frame immediately (or with small delay to prevent browser locking)
         if (c64StreamInterval) setTimeout(streamLoop, 10); 
