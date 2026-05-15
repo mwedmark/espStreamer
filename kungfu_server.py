@@ -67,7 +67,7 @@ def _build_streamer_code(base_addr):
     jmp_start = base_addr + len(code)
     code += [0x4C, 0x00, 0x00] # JMP main_loop
     
-    # --- Subroutine: ef3usb_fread ---
+    # --- Subroutine: ef3usb_fread (4x Unrolled + SMC) ---
     # Expects X = size low, Y = size high, $FC = buffer ptr
     fread_addr = base_addr + len(code)
     
@@ -95,42 +95,92 @@ def _build_streamer_code(base_addr):
     add_rel(code, 0x10, wait_rx_2, base_addr + len(code)) # BPL
     code += [0xAC, 0x0A, 0xDE, 0x84, 0x05] # LDY $DE0A, STY $05
     
-    code += [0x8A] # TXA
+    # Divide size by 4 to get iteration count (multiples of 4 guaranteed)
+    code += [0x46, 0x05, 0x66, 0x04] # LSR $05, ROR $04
+    code += [0x46, 0x05, 0x66, 0x04] # LSR $05, ROR $04
+
+    # Setup EOR counting
+    code += [0xA5, 0x04, 0x49, 0xFF, 0xAA] # LDA $04, EOR #$FF, TAX
+    code += [0xA5, 0x05, 0x49, 0xFF, 0x85, 0xFE] # LDA $05, EOR #$FF, STA $FE
     
-    # ef3usb_read_common
-    common_addr = base_addr + len(code)
+    # Initialize SMC base addresses (Low byte)
+    code += [0xA5, 0xFC] # LDA $FC
+    smc_lo_patches = []
+    smc_hi_patches = []
     
-    code += [0x49, 0xFF, 0xAA] # EOR #$FF, TAX
-    code += [0x98, 0x49, 0xFF, 0x85, 0xFE] # TYA, EOR #$FF, STA $FE (m_size_hi)
+    code += [0x8D, 0x00, 0x00] # STA smc1+1
+    smc_lo_patches.append(len(code) - 2)
+    code += [0x8D, 0x00, 0x00] # STA smc2+1
+    smc_lo_patches.append(len(code) - 2)
+    code += [0x8D, 0x00, 0x00] # STA smc3+1
+    smc_lo_patches.append(len(code) - 2)
+    code += [0x8D, 0x00, 0x00] # STA smc4+1
+    smc_lo_patches.append(len(code) - 2)
+    
+    # Initialize SMC base addresses (High byte)
+    code += [0xA5, 0xFD] # LDA $FD
+    code += [0x8D, 0x00, 0x00] # STA smc1+2
+    smc_hi_patches.append(len(code) - 2)
+    code += [0x8D, 0x00, 0x00] # STA smc2+2
+    smc_hi_patches.append(len(code) - 2)
+    code += [0x8D, 0x00, 0x00] # STA smc3+2
+    smc_hi_patches.append(len(code) - 2)
+    code += [0x8D, 0x00, 0x00] # STA smc4+2
+    smc_hi_patches.append(len(code) - 2)
+    
     code += [0xA0, 0x00] # LDY #0
+    
+    # Jump into the decrement logic to start the EOR count properly
     jmp_inc_fwd = len(code)
     code += [0x4C, 0x00, 0x00] # JMP incCounter
-    
-    # getBytes
+
+    # --- Inner Unrolled Loop ---
     get_bytes_addr = base_addr + len(code)
-    wait_rx_3 = base_addr + len(code)
-    code += [0x2C, 0x09, 0xDE] # BIT $DE09
-    add_rel(code, 0x10, wait_rx_3, base_addr + len(code)) # BPL
-    code += [0xAD, 0x0A, 0xDE] # LDA $DE0A
-    code += [0x91, 0xFC] # STA ($FC),Y
-    code += [0xC8] # INY
-    bne_inc_fwd = len(code)
-    code += [0xD0, 0x00] # BNE incCounter
-    code += [0xE6, 0xFD] # INC $FD
+    
+    smc_inst_addrs = []
+    for i in range(4):
+        # wait_usb_rx_ok
+        wait_rx = base_addr + len(code)
+        code += [0x2C, 0x09, 0xDE] # BIT $DE09
+        add_rel(code, 0x10, wait_rx, base_addr + len(code)) # BPL
+        
+        code += [0xAD, 0x0A, 0xDE] # LDA $DE0A
+        
+        # STA abs,Y (SMC instruction)
+        smc_inst_addrs.append(base_addr + len(code))
+        code += [0x99, 0x00, 0x00] # STA $0000,Y
+        
+        code += [0xC8] # INY
+        
+    # Check if Y wrapped to 0 (page boundary)
+    bne_page = len(code)
+    code += [0xD0, 0x00] # BNE skip_page_inc
+    
+    # INC high bytes
+    for i in range(4):
+        code += [0xEE, (smc_inst_addrs[i] + 2) & 0xFF, (smc_inst_addrs[i] + 2) >> 8] # INC smc+2
+        
+    skip_page_addr = base_addr + len(code)
+    code[bne_page + 1] = (skip_page_addr - (base_addr + bne_page + 2)) & 0xFF
     
     # incCounter
     inc_counter_addr = base_addr + len(code)
     code[jmp_inc_fwd + 1] = inc_counter_addr & 0xFF
     code[jmp_inc_fwd + 2] = (inc_counter_addr >> 8) & 0xFF
-    code[bne_inc_fwd + 1] = (inc_counter_addr - (base_addr + bne_inc_fwd + 2)) & 0xFF
     
     code += [0xE8] # INX
-    add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE getBytes
+    add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE get_bytes
     code += [0xE6, 0xFE] # INC $FE
-    add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE getBytes
+    add_rel(code, 0xD0, get_bytes_addr, base_addr + len(code)) # BNE get_bytes
     
-    # end
     code += [0x60] # RTS
+    
+    # Patch SMC initialization
+    for i in range(4):
+        code[smc_lo_patches[i]] = (smc_inst_addrs[i] + 1) & 0xFF
+        code[smc_lo_patches[i] + 1] = (smc_inst_addrs[i] + 1) >> 8
+        code[smc_hi_patches[i]] = (smc_inst_addrs[i] + 2) & 0xFF
+        code[smc_hi_patches[i] + 1] = (smc_inst_addrs[i] + 2) >> 8
 
     # --- Main Loop (Double Buffered) ---
     # Bank 0: Bitmap $2000, Screen $0400
@@ -141,10 +191,10 @@ def _build_streamer_code(base_addr):
     code[jmp_start - base_addr + 1] = main_loop_addr & 0xFF
     code[jmp_start - base_addr + 2] = (main_loop_addr >> 8) & 0xFF
 
-    # Read Mode and BG color (2 bytes) -> $0200
+    # Read Mode and BG color (4 bytes) -> $0200
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA9, 0x02, 0x85, 0xFD] # $FD = $02
-    code += [0xA2, 0x02, 0xA0, 0x00] # X = 2, Y = 0 (2 bytes)
+    code += [0xA2, 0x04, 0xA0, 0x00] # X = 4, Y = 0 (4 bytes)
     code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
 
     # Determine back buffer based on flag at $03
@@ -495,13 +545,13 @@ class KungFuFlashSerial:
 
         with self.lock:
             try:
-                # Payload is exactly 10002 bytes
-                payload = bytes([mode & 0xFF, bg_color & 0xFF])
+                # Payload is exactly 10004 bytes (padded for 4-byte unrolled loop)
+                payload = bytes([mode & 0xFF, bg_color & 0xFF, 0, 0])
                 payload += bytes(bitmap[:8000])
                 payload += bytes(screen[:1000])
                 payload += bytes(color[:1000])
 
-                while len(payload) < 10002:
+                while len(payload) < 10004:
                     payload += b'\x00'
 
                 offset = 0
@@ -513,8 +563,8 @@ class KungFuFlashSerial:
                     if len(req) < 2:
                         print(f"Chunk request timeout at offset {offset}. C64 might be deadlocked waiting for RX.")
                         if offset == 0:
-                            print("Assuming C64 already requested first 2 bytes. Pushing them to unblock...")
-                            chunk_size = 2
+                            print("Assuming C64 already requested first 4 bytes. Pushing them to unblock...")
+                            chunk_size = 4
                         else:
                             return False
                     else:
