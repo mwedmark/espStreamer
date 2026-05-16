@@ -368,6 +368,100 @@ def _build_streamer_code(base_addr):
         code[smc16_hi_patches[i]] = (smc16_inst_addrs[i] + 2) & 0xFF
         code[smc16_hi_patches[i] + 1] = (smc16_inst_addrs[i] + 2) >> 8
 
+    # --- Subroutine: ef3usb_fread32 (32x Unrolled + SMC) ---
+    # Bitmap-only faster path. 8000 bytes is divisible by 32.
+    fread32_addr = base_addr + len(code)
+
+    wait_tx_1 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x50, wait_tx_1, base_addr + len(code)) # BVC
+    code += [0x8E, 0x0A, 0xDE] # STX $DE0A
+
+    wait_tx_2 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x50, wait_tx_2, base_addr + len(code)) # BVC
+    code += [0x8C, 0x0A, 0xDE] # STY $DE0A
+
+    wait_rx_1 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x10, wait_rx_1, base_addr + len(code)) # BPL
+    code += [0xAE, 0x0A, 0xDE, 0x86, 0x04] # LDX $DE0A, STX $04
+
+    wait_rx_2 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x10, wait_rx_2, base_addr + len(code)) # BPL
+    code += [0xAC, 0x0A, 0xDE, 0x84, 0x05] # LDY $DE0A, STY $05
+
+    # Divide size by 32 to get iteration count.
+    for i in range(5):
+        code += [0x46, 0x05, 0x66, 0x04] # LSR $05, ROR $04
+
+    code += [0xA5, 0x04, 0x49, 0xFF, 0xAA] # LDA $04, EOR #$FF, TAX
+    code += [0xA5, 0x05, 0x49, 0xFF, 0x85, 0xFE] # LDA $05, EOR #$FF, STA $FE
+
+    code += [0xA5, 0xFC] # LDA $FC
+    smc32_lo_patches = []
+    smc32_hi_patches = []
+    for i in range(32):
+        code += [0x8D, 0x00, 0x00] # STA smc+1
+        smc32_lo_patches.append(len(code) - 2)
+
+    code += [0xA5, 0xFD] # LDA $FD
+    for i in range(32):
+        code += [0x8D, 0x00, 0x00] # STA smc+2
+        smc32_hi_patches.append(len(code) - 2)
+
+    code += [0xA0, 0x00] # LDY #0
+
+    jmp32_inc_fwd = len(code)
+    code += [0x4C, 0x00, 0x00] # JMP incCounter
+
+    get32_bytes_addr = base_addr + len(code)
+    smc32_inst_addrs = []
+    for i in range(32):
+        wait_rx = base_addr + len(code)
+        code += [0x2C, 0x09, 0xDE] # BIT $DE09
+        add_rel(code, 0x10, wait_rx, base_addr + len(code)) # BPL
+
+        code += [0xAD, 0x0A, 0xDE] # LDA $DE0A
+        smc32_inst_addrs.append(base_addr + len(code))
+        code += [0x99, 0x00, 0x00] # STA $0000,Y
+        code += [0xC8] # INY
+
+    bne32_page = len(code)
+    code += [0xD0, 0x00] # BNE skip_page_inc
+
+    for i in range(32):
+        code += [0xEE, (smc32_inst_addrs[i] + 2) & 0xFF, (smc32_inst_addrs[i] + 2) >> 8] # INC smc+2
+
+    skip32_page_addr = base_addr + len(code)
+    code[bne32_page + 1] = (skip32_page_addr - (base_addr + bne32_page + 2)) & 0xFF
+
+    inc32_counter_addr = base_addr + len(code)
+    code[jmp32_inc_fwd + 1] = inc32_counter_addr & 0xFF
+    code[jmp32_inc_fwd + 2] = (inc32_counter_addr >> 8) & 0xFF
+
+    code += [0xE8] # INX
+    beq32_hi = len(code)
+    code += [0xF0, 0x00] # BEQ high-byte counter
+    code += [0x4C, get32_bytes_addr & 0xFF, (get32_bytes_addr >> 8) & 0xFF] # JMP get_bytes
+
+    hi32_counter_addr = base_addr + len(code)
+    code[beq32_hi + 1] = (hi32_counter_addr - (base_addr + beq32_hi + 2)) & 0xFF
+    code += [0xE6, 0xFE] # INC $FE
+    beq32_done = len(code)
+    code += [0xF0, 0x00] # BEQ done
+    code += [0x4C, get32_bytes_addr & 0xFF, (get32_bytes_addr >> 8) & 0xFF] # JMP get_bytes
+    done32_addr = base_addr + len(code)
+    code[beq32_done + 1] = (done32_addr - (base_addr + beq32_done + 2)) & 0xFF
+    code += [0x60] # RTS
+
+    for i in range(32):
+        code[smc32_lo_patches[i]] = (smc32_inst_addrs[i] + 1) & 0xFF
+        code[smc32_lo_patches[i] + 1] = (smc32_inst_addrs[i] + 1) >> 8
+        code[smc32_hi_patches[i]] = (smc32_inst_addrs[i] + 2) & 0xFF
+        code[smc32_hi_patches[i] + 1] = (smc32_inst_addrs[i] + 2) >> 8
+
     # --- Main Loop (Double Buffered) ---
     # Bank 0: Bitmap $2000, Screen $0400
     # Bank 1: Bitmap $6000, Screen $4400
@@ -410,19 +504,31 @@ def _build_streamer_code(base_addr):
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA5, 0x06, 0x85, 0xFD] # LDA $06; STA $FD
     code += [0xA2, 0x40, 0xA0, 0x1F] # X = $40, Y = $1F (8000 bytes)
-    code += [0x20, fread16_addr & 0xFF, (fread16_addr >> 8) & 0xFF]
+    code += [0x20, fread32_addr & 0xFF, (fread32_addr >> 8) & 0xFF]
 
     # Read Screen (1000 bytes) -> dest from $07
+    code += [0xAD, 0x02, 0x02] # LDA $0202 (update flags)
+    code += [0x29, 0x01]       # AND #$01 (screen changed)
+    beq_skip_screen = base_addr + len(code)
+    code += [0xF0, 0x00]       # BEQ skip_screen (patch later)
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA5, 0x07, 0x85, 0xFD] # LDA $07; STA $FD
     code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
     code += [0x20, fread8_addr & 0xFF, (fread8_addr >> 8) & 0xFF]
+    skip_screen_addr = base_addr + len(code)
+    code[beq_skip_screen - base_addr + 1] = (skip_screen_addr - (beq_skip_screen + 2)) & 0xFF
 
     # Read Color (1000 bytes) -> $D800 (hardware-fixed, always same)
+    code += [0xAD, 0x02, 0x02] # LDA $0202 (update flags)
+    code += [0x29, 0x02]       # AND #$02 (color changed)
+    beq_skip_color = base_addr + len(code)
+    code += [0xF0, 0x00]       # BEQ skip_color (patch later)
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA9, 0xD8, 0x85, 0xFD] # $FD = $D8
     code += [0xA2, 0xE8, 0xA0, 0x03] # X = $E8, Y = $03 (1000 bytes)
     code += [0x20, fread8_addr & 0xFF, (fread8_addr >> 8) & 0xFF]
+    skip_color_addr = base_addr + len(code)
+    code[beq_skip_color - base_addr + 1] = (skip_color_addr - (beq_skip_color + 2)) & 0xFF
 
     # Apply VIC Settings
     code += [0xAD, 0x01, 0x02] # LDA $0201 (bg_color)
@@ -549,6 +655,10 @@ class KungFuFlashSerial:
         self.connected = False
         self.viewer_running = False
         self.lock = threading.Lock()
+        self.prev_mode = None
+        self.prev_screen = None
+        self.prev_color = None
+        self.screen_refresh_frames = 0
 
     @staticmethod
     def find_kff_port():
@@ -592,6 +702,10 @@ class KungFuFlashSerial:
             self.port_name = port
             self.connected = True
             self.viewer_running = True # Assume viewer is started manually
+            self.prev_mode = None
+            self.prev_screen = None
+            self.prev_color = None
+            self.screen_refresh_frames = 0
 
             # Do NOT flush input buffer because C64 might have already sent a chunk request!
             self.ser.reset_output_buffer()
@@ -615,6 +729,10 @@ class KungFuFlashSerial:
             self.ser = None
         self.connected = False
         self.viewer_running = False
+        self.prev_mode = None
+        self.prev_screen = None
+        self.prev_color = None
+        self.screen_refresh_frames = 0
         print("Disconnected from KFF")
 
     def send_viewer_prg(self, prg_file="viewer.prg"):
@@ -717,6 +835,10 @@ class KungFuFlashSerial:
             # Do not flush here: the freshly launched viewer may already have
             # sent its first 2-byte chunk request while we were waiting.
             self.viewer_running = True
+            self.prev_mode = None
+            self.prev_screen = None
+            self.prev_color = None
+            self.screen_refresh_frames = 0
             return True
 
         except Exception as e:
@@ -732,14 +854,28 @@ class KungFuFlashSerial:
 
         with self.lock:
             try:
-                # Payload is exactly 10004 bytes (padded for 4-byte unrolled loop)
-                payload = bytes([mode & 0xFF, bg_color & 0xFF, 0, 0])
-                payload += bytes(bitmap[:8000])
-                payload += bytes(screen[:1000])
-                payload += bytes(color[:1000])
+                bitmap_data = bytes(bitmap[:8000]).ljust(8000, b'\x00')
+                screen_data = bytes(screen[:1000]).ljust(1000, b'\x00')
+                color_data = bytes(color[:1000]).ljust(1000, b'\x00')
 
-                while len(payload) < 10004:
-                    payload += b'\x00'
+                mode_changed = self.prev_mode != (mode & 0xFF)
+                screen_changed = mode_changed or self.prev_screen != screen_data
+                color_changed = mode_changed or self.prev_color != color_data
+
+                if screen_changed:
+                    # Screen RAM is double-buffered, so update both banks.
+                    self.screen_refresh_frames = 2
+
+                send_screen = self.screen_refresh_frames > 0
+                send_color = color_changed
+
+                flags = (0x01 if send_screen else 0x00) | (0x02 if send_color else 0x00)
+                payload = bytes([mode & 0xFF, bg_color & 0xFF, flags, 0])
+                payload += bitmap_data
+                if send_screen:
+                    payload += screen_data
+                if send_color:
+                    payload += color_data
 
                 offset = 0
                 self.ser.timeout = 2.0
@@ -768,6 +904,13 @@ class KungFuFlashSerial:
                     self.ser.flush()
                     
                     offset += actual_size
+
+                self.prev_mode = mode & 0xFF
+                if send_screen:
+                    self.prev_screen = screen_data
+                    self.screen_refresh_frames -= 1
+                if send_color:
+                    self.prev_color = color_data
 
                 return True
 
