@@ -462,6 +462,37 @@ def _build_streamer_code(base_addr):
         code[smc32_hi_patches[i]] = (smc32_inst_addrs[i] + 2) & 0xFF
         code[smc32_hi_patches[i] + 1] = (smc32_inst_addrs[i] + 2) >> 8
 
+    # --- Subroutine: apply_delta_pages ---
+    # Expects $08 = page count, $09 = destination high-byte base.
+    # Each record is 4 bytes of metadata (page index in byte 0) + 256 data bytes.
+    apply_delta_pages_addr = base_addr + len(code)
+    delta_loop_addr = base_addr + len(code)
+    code += [0xA5, 0x08] # LDA $08
+    beq_delta_done = len(code)
+    code += [0xF0, 0x00] # BEQ done
+
+    # Read page index record -> $0208.
+    code += [0xA9, 0x08, 0x85, 0xFC] # $FC = $08
+    code += [0xA9, 0x02, 0x85, 0xFD] # $FD = $02
+    code += [0xA2, 0x04, 0xA0, 0x00] # 4 bytes
+    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
+
+    # Destination page high byte = base high + page index.
+    code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
+    code += [0xA5, 0x09]             # LDA base high
+    code += [0x18]                   # CLC
+    code += [0x6D, 0x08, 0x02]       # ADC $0208
+    code += [0x85, 0xFD]             # STA $FD
+
+    # Read one full 256-byte page.
+    code += [0xA2, 0x00, 0xA0, 0x01] # X/Y = $0100
+    code += [0x20, fread32_addr & 0xFF, (fread32_addr >> 8) & 0xFF]
+    code += [0xC6, 0x08] # DEC $08
+    code += [0x4C, delta_loop_addr & 0xFF, (delta_loop_addr >> 8) & 0xFF]
+    delta_done_addr = base_addr + len(code)
+    code[beq_delta_done + 1] = (delta_done_addr - (base_addr + beq_delta_done + 2)) & 0xFF
+    code += [0x60] # RTS
+
     # --- Main Loop (Double Buffered) ---
     # Bank 0: Bitmap $2000, Screen $0400
     # Bank 1: Bitmap $6000, Screen $4400
@@ -500,6 +531,39 @@ def _build_streamer_code(base_addr):
     code[jmp_do_reads - base_addr + 1] = do_reads_addr & 0xFF
     code[jmp_do_reads - base_addr + 2] = (do_reads_addr >> 8) & 0xFF
 
+    # Delta mode: flags bit 7 set. Header byte 3 is bitmap page count.
+    code += [0xAD, 0x02, 0x02] # LDA $0202 (update flags)
+    code += [0x29, 0x80]       # AND #$80
+    beq_full_reads = base_addr + len(code)
+    code += [0xF0, 0x00]       # BEQ full_reads (patch later)
+
+    # Read delta section counts -> $0204: screen_count, color_count, reserved, reserved.
+    code += [0xA9, 0x04, 0x85, 0xFC] # $FC = $04
+    code += [0xA9, 0x02, 0x85, 0xFD] # $FD = $02
+    code += [0xA2, 0x04, 0xA0, 0x00] # 4 bytes
+    code += [0x20, fread_addr & 0xFF, (fread_addr >> 8) & 0xFF]
+
+    # Apply bitmap pages.
+    code += [0xAD, 0x03, 0x02, 0x85, 0x08] # LDA $0203; STA $08
+    code += [0xA5, 0x06, 0x85, 0x09]       # LDA $06; STA $09
+    code += [0x20, apply_delta_pages_addr & 0xFF, (apply_delta_pages_addr >> 8) & 0xFF]
+
+    # Apply screen pages.
+    code += [0xAD, 0x04, 0x02, 0x85, 0x08] # LDA $0204; STA $08
+    code += [0xA5, 0x07, 0x85, 0x09]       # LDA $07; STA $09
+    code += [0x20, apply_delta_pages_addr & 0xFF, (apply_delta_pages_addr >> 8) & 0xFF]
+
+    # Apply color pages.
+    code += [0xAD, 0x05, 0x02, 0x85, 0x08] # LDA $0205; STA $08
+    code += [0xA9, 0xD8, 0x85, 0x09]       # LDA #$D8; STA $09
+    code += [0x20, apply_delta_pages_addr & 0xFF, (apply_delta_pages_addr >> 8) & 0xFF]
+
+    jmp_apply_settings = base_addr + len(code)
+    code += [0x4C, 0x00, 0x00] # JMP apply_settings (patch later)
+
+    full_reads_addr = base_addr + len(code)
+    code[beq_full_reads - base_addr + 1] = (full_reads_addr - (beq_full_reads + 2)) & 0xFF
+
     # Read Bitmap (8000 bytes) -> dest from $06
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA5, 0x06, 0x85, 0xFD] # LDA $06; STA $FD
@@ -531,6 +595,10 @@ def _build_streamer_code(base_addr):
     code[beq_skip_color - base_addr + 1] = (skip_color_addr - (beq_skip_color + 2)) & 0xFF
 
     # Apply VIC Settings
+    apply_settings_addr = base_addr + len(code)
+    code[jmp_apply_settings - base_addr + 1] = apply_settings_addr & 0xFF
+    code[jmp_apply_settings - base_addr + 2] = (apply_settings_addr >> 8) & 0xFF
+
     code += [0xAD, 0x01, 0x02] # LDA $0201 (bg_color)
     code += [0x8D, 0x21, 0xD0] # STA $D021
     code += [0x8D, 0x20, 0xD0] # STA $D020 (border = bg_color)
@@ -659,6 +727,9 @@ class KungFuFlashSerial:
         self.prev_screen = None
         self.prev_color = None
         self.screen_refresh_frames = 0
+        self.next_buffer = 1
+        self.bitmap_buffers = [None, None]
+        self.screen_buffers = [None, None]
 
     @staticmethod
     def find_kff_port():
@@ -706,6 +777,9 @@ class KungFuFlashSerial:
             self.prev_screen = None
             self.prev_color = None
             self.screen_refresh_frames = 0
+            self.next_buffer = 1
+            self.bitmap_buffers = [None, None]
+            self.screen_buffers = [None, None]
 
             # Do NOT flush input buffer because C64 might have already sent a chunk request!
             self.ser.reset_output_buffer()
@@ -733,6 +807,9 @@ class KungFuFlashSerial:
         self.prev_screen = None
         self.prev_color = None
         self.screen_refresh_frames = 0
+        self.next_buffer = 1
+        self.bitmap_buffers = [None, None]
+        self.screen_buffers = [None, None]
         print("Disconnected from KFF")
 
     def send_viewer_prg(self, prg_file="viewer.prg"):
@@ -839,6 +916,9 @@ class KungFuFlashSerial:
             self.prev_screen = None
             self.prev_color = None
             self.screen_refresh_frames = 0
+            self.next_buffer = 1
+            self.bitmap_buffers = [None, None]
+            self.screen_buffers = [None, None]
             return True
 
         except Exception as e:
@@ -854,11 +934,15 @@ class KungFuFlashSerial:
 
         with self.lock:
             try:
+                mode_byte = mode & 0xFF
                 bitmap_data = bytes(bitmap[:8000]).ljust(8000, b'\x00')
                 screen_data = bytes(screen[:1000]).ljust(1000, b'\x00')
                 color_data = bytes(color[:1000]).ljust(1000, b'\x00')
+                bitmap_pages = bitmap_data.ljust(8192, b'\x00')
+                screen_pages = screen_data.ljust(1024, b'\x00')
+                color_pages = color_data.ljust(1024, b'\x00')
 
-                mode_changed = self.prev_mode != (mode & 0xFF)
+                mode_changed = self.prev_mode != mode_byte
                 screen_changed = mode_changed or self.prev_screen != screen_data
                 color_changed = mode_changed or self.prev_color != color_data
 
@@ -870,12 +954,45 @@ class KungFuFlashSerial:
                 send_color = color_changed
 
                 flags = (0x01 if send_screen else 0x00) | (0x02 if send_color else 0x00)
-                payload = bytes([mode & 0xFF, bg_color & 0xFF, flags, 0])
-                payload += bitmap_data
+                full_payload = bytes([mode_byte, bg_color & 0xFF, flags, 0])
+                full_payload += bitmap_data
                 if send_screen:
-                    payload += screen_data
+                    full_payload += screen_data
                 if send_color:
-                    payload += color_data
+                    full_payload += color_data
+
+                payload = full_payload
+                used_delta = False
+                target_buffer = self.next_buffer
+
+                def page_records(current, previous, page_count):
+                    records = []
+                    if previous is None:
+                        return None
+                    for page in range(page_count):
+                        start = page * 256
+                        end = start + 256
+                        page_data = current[start:end]
+                        if page_data != previous[start:end]:
+                            records.append((page, page_data))
+                    return records
+
+                if not mode_changed:
+                    bitmap_records = page_records(bitmap_pages, self.bitmap_buffers[target_buffer], 32)
+                    screen_records = page_records(screen_pages, self.screen_buffers[target_buffer], 4)
+                    color_records = page_records(color_pages, self.prev_color.ljust(1024, b'\x00') if self.prev_color else None, 4)
+
+                    if bitmap_records is not None and screen_records is not None and color_records is not None:
+                        delta_payload = bytes([mode_byte, bg_color & 0xFF, 0x80, len(bitmap_records)])
+                        delta_payload += bytes([len(screen_records), len(color_records), 0, 0])
+                        for records in (bitmap_records, screen_records, color_records):
+                            for page, page_data in records:
+                                delta_payload += bytes([page, 0, 0, 0])
+                                delta_payload += page_data
+
+                        if len(delta_payload) < len(full_payload):
+                            payload = delta_payload
+                            used_delta = True
 
                 offset = 0
                 self.ser.timeout = 2.0
@@ -905,12 +1022,16 @@ class KungFuFlashSerial:
                     
                     offset += actual_size
 
-                self.prev_mode = mode & 0xFF
-                if send_screen:
-                    self.prev_screen = screen_data
+                self.prev_mode = mode_byte
+                self.bitmap_buffers[target_buffer] = bitmap_pages
+                self.screen_buffers[target_buffer] = screen_pages
+                self.prev_screen = screen_data
+                self.prev_color = color_data
+                if send_screen and not used_delta:
                     self.screen_refresh_frames -= 1
-                if send_color:
-                    self.prev_color = color_data
+                elif used_delta:
+                    self.screen_refresh_frames = 0
+                self.next_buffer ^= 1
 
                 return True
 
