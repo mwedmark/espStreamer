@@ -272,6 +272,102 @@ def _build_streamer_code(base_addr):
         code[smc8_hi_patches[i]] = (smc8_inst_addrs[i] + 2) & 0xFF
         code[smc8_hi_patches[i] + 1] = (smc8_inst_addrs[i] + 2) >> 8
 
+    # --- Subroutine: ef3usb_fread16 (16x Unrolled + SMC) ---
+    # Bitmap-only fast path. 8000 bytes is divisible by 16.
+    fread16_addr = base_addr + len(code)
+
+    wait_tx_1 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x50, wait_tx_1, base_addr + len(code)) # BVC
+    code += [0x8E, 0x0A, 0xDE] # STX $DE0A
+
+    wait_tx_2 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x50, wait_tx_2, base_addr + len(code)) # BVC
+    code += [0x8C, 0x0A, 0xDE] # STY $DE0A
+
+    wait_rx_1 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x10, wait_rx_1, base_addr + len(code)) # BPL
+    code += [0xAE, 0x0A, 0xDE, 0x86, 0x04] # LDX $DE0A, STX $04
+
+    wait_rx_2 = base_addr + len(code)
+    code += [0x2C, 0x09, 0xDE] # BIT $DE09
+    add_rel(code, 0x10, wait_rx_2, base_addr + len(code)) # BPL
+    code += [0xAC, 0x0A, 0xDE, 0x84, 0x05] # LDY $DE0A, STY $05
+
+    # Divide size by 16 to get iteration count.
+    code += [0x46, 0x05, 0x66, 0x04] # LSR $05, ROR $04
+    code += [0x46, 0x05, 0x66, 0x04] # LSR $05, ROR $04
+    code += [0x46, 0x05, 0x66, 0x04] # LSR $05, ROR $04
+    code += [0x46, 0x05, 0x66, 0x04] # LSR $05, ROR $04
+
+    code += [0xA5, 0x04, 0x49, 0xFF, 0xAA] # LDA $04, EOR #$FF, TAX
+    code += [0xA5, 0x05, 0x49, 0xFF, 0x85, 0xFE] # LDA $05, EOR #$FF, STA $FE
+
+    code += [0xA5, 0xFC] # LDA $FC
+    smc16_lo_patches = []
+    smc16_hi_patches = []
+    for i in range(16):
+        code += [0x8D, 0x00, 0x00] # STA smc+1
+        smc16_lo_patches.append(len(code) - 2)
+
+    code += [0xA5, 0xFD] # LDA $FD
+    for i in range(16):
+        code += [0x8D, 0x00, 0x00] # STA smc+2
+        smc16_hi_patches.append(len(code) - 2)
+
+    code += [0xA0, 0x00] # LDY #0
+
+    jmp16_inc_fwd = len(code)
+    code += [0x4C, 0x00, 0x00] # JMP incCounter
+
+    get16_bytes_addr = base_addr + len(code)
+    smc16_inst_addrs = []
+    for i in range(16):
+        wait_rx = base_addr + len(code)
+        code += [0x2C, 0x09, 0xDE] # BIT $DE09
+        add_rel(code, 0x10, wait_rx, base_addr + len(code)) # BPL
+
+        code += [0xAD, 0x0A, 0xDE] # LDA $DE0A
+        smc16_inst_addrs.append(base_addr + len(code))
+        code += [0x99, 0x00, 0x00] # STA $0000,Y
+        code += [0xC8] # INY
+
+    bne16_page = len(code)
+    code += [0xD0, 0x00] # BNE skip_page_inc
+
+    for i in range(16):
+        code += [0xEE, (smc16_inst_addrs[i] + 2) & 0xFF, (smc16_inst_addrs[i] + 2) >> 8] # INC smc+2
+
+    skip16_page_addr = base_addr + len(code)
+    code[bne16_page + 1] = (skip16_page_addr - (base_addr + bne16_page + 2)) & 0xFF
+
+    inc16_counter_addr = base_addr + len(code)
+    code[jmp16_inc_fwd + 1] = inc16_counter_addr & 0xFF
+    code[jmp16_inc_fwd + 2] = (inc16_counter_addr >> 8) & 0xFF
+
+    code += [0xE8] # INX
+    beq16_hi = len(code)
+    code += [0xF0, 0x00] # BEQ high-byte counter
+    code += [0x4C, get16_bytes_addr & 0xFF, (get16_bytes_addr >> 8) & 0xFF] # JMP get_bytes
+
+    hi16_counter_addr = base_addr + len(code)
+    code[beq16_hi + 1] = (hi16_counter_addr - (base_addr + beq16_hi + 2)) & 0xFF
+    code += [0xE6, 0xFE] # INC $FE
+    beq16_done = len(code)
+    code += [0xF0, 0x00] # BEQ done
+    code += [0x4C, get16_bytes_addr & 0xFF, (get16_bytes_addr >> 8) & 0xFF] # JMP get_bytes
+    done16_addr = base_addr + len(code)
+    code[beq16_done + 1] = (done16_addr - (base_addr + beq16_done + 2)) & 0xFF
+    code += [0x60] # RTS
+
+    for i in range(16):
+        code[smc16_lo_patches[i]] = (smc16_inst_addrs[i] + 1) & 0xFF
+        code[smc16_lo_patches[i] + 1] = (smc16_inst_addrs[i] + 1) >> 8
+        code[smc16_hi_patches[i]] = (smc16_inst_addrs[i] + 2) & 0xFF
+        code[smc16_hi_patches[i] + 1] = (smc16_inst_addrs[i] + 2) >> 8
+
     # --- Main Loop (Double Buffered) ---
     # Bank 0: Bitmap $2000, Screen $0400
     # Bank 1: Bitmap $6000, Screen $4400
@@ -314,7 +410,7 @@ def _build_streamer_code(base_addr):
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
     code += [0xA5, 0x06, 0x85, 0xFD] # LDA $06; STA $FD
     code += [0xA2, 0x40, 0xA0, 0x1F] # X = $40, Y = $1F (8000 bytes)
-    code += [0x20, fread8_addr & 0xFF, (fread8_addr >> 8) & 0xFF]
+    code += [0x20, fread16_addr & 0xFF, (fread16_addr >> 8) & 0xFF]
 
     # Read Screen (1000 bytes) -> dest from $07
     code += [0xA9, 0x00, 0x85, 0xFC] # $FC = $00
