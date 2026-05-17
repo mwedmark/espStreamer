@@ -23,7 +23,7 @@ async function apiFetch(path) {
   return fetch(espBaseUrl + path);
 }
 function setBackendMode(m) { usePCBackend = (m === 'pc'); document.getElementById('btn-backend-pc').style.borderColor = usePCBackend ? '#40ff40' : '#6c8cff'; if (usePCBackend) window.C64Engine.start(); else window.C64Engine.stop(); syncAll(); }
-function syncAll() { sendContrast(); sendBrightness(); sendBg(); sendPalette(); sendDither(); sendDitherType(); sendScaling(); }
+function syncAll() { sendContrast(); sendBrightness(); sendSaturation(); sendBg(); sendPalette(); sendDither(); sendDitherType(); sendScaling(); }
 function resetKungFuStreamBuffers(mode) {
   if (kungFuWebSocket && kungFuWebSocket.readyState === WebSocket.OPEN) {
     kungFuWebSocket.send(JSON.stringify({ command: 'reset_buffers', mode }));
@@ -36,6 +36,8 @@ function updateContrastText() { document.getElementById('cval').innerText = pars
 function sendContrast() { sendSettingWithC64Reset('/setcontrast?c=' + document.getElementById('contrast').value, 'contrast'); }
 function updateBrightnessText() { document.getElementById('bval').innerText = document.getElementById('brightness').value; }
 function sendBrightness() { sendSettingWithC64Reset('/setbrightness?b=' + document.getElementById('brightness').value, 'brightness'); }
+function updateSaturationText() { document.getElementById('sval').innerText = parseFloat(document.getElementById('saturation').value).toFixed(1); }
+function sendSaturation() { sendSettingWithC64Reset('/setsaturation?s=' + document.getElementById('saturation').value, 'saturation'); }
 function updateDitherText() { document.getElementById('dval').innerText = document.getElementById('dither').value; }
 function sendDither(resetBuffers = true) { const path = '/setdither?d=' + document.getElementById('dither').value; return resetBuffers ? sendSettingWithC64Reset(path, 'dither') : apiFetch(path); }
 function sendDitherType() { sendSettingWithC64Reset('/setdithertype?t=' + document.getElementById('ditherType').value, 'dither type'); sendDither(false); }
@@ -951,6 +953,7 @@ async function upd() {
       let stE = document.getElementById('stxt'); if (stE) stE.innerHTML = stText;
       if (document.getElementById('contrast') && document.activeElement !== document.getElementById('contrast')) { document.getElementById('contrast').value = s.contrast; updateContrastText(); }
       if (document.getElementById('brightness') && document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
+      if (s.saturation !== undefined && document.getElementById('saturation') && document.activeElement !== document.getElementById('saturation')) { document.getElementById('saturation').value = s.saturation; updateSaturationText(); }
       if (document.getElementById('dither') && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
       if (document.getElementById('ditherType') && document.activeElement !== document.getElementById('ditherType')) { document.getElementById('ditherType').value = s.ditherType; }
       if (document.getElementById('scaling') && document.activeElement !== document.getElementById('scaling')) { document.getElementById('scaling').value = s.scaling; document.getElementById('c').setAttribute('data-scale', s.scaling); }

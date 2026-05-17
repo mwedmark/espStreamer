@@ -267,6 +267,9 @@
       <span>BR: <span id="bval" class="val">0</span></span>
       <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()"
         onchange="sendBrightness()">
+      <span>SAT: <span id="sval" class="val">1.0</span></span>
+      <input type="range" id="saturation" min="0.0" max="2.0" step="0.1" value="1.0" oninput="updateSaturationText()"
+        onchange="sendSaturation()">
       <select id="pal-sel" onchange="sendPalette()" style="color:#ffcc80">
         <option value="0">PEPTO (PAL)</option>
         <option value="1">COLODORE</option>

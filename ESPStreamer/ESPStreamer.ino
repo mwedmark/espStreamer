@@ -172,6 +172,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawhtml(
     <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
     <span>BR: <span id="bval" class="val">0</span></span>
     <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()" onchange="sendBrightness()">
+    <span>SAT: <span id="sval" class="val">1.0</span></span>
+    <input type="range" id="saturation" min="0.0" max="2.0" step="0.1" value="1.0" oninput="updateSaturationText()" onchange="sendSaturation()">
     <span style="margin-left:4px">SCALE:</span>
     <select id="scale" onchange="sendScale()">
       <option value="1">1:1 (HQ)</option>
@@ -259,8 +261,10 @@ function updateModeUI() {
 }
 function updateContrastText() { document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1); }
 function updateBrightnessText() { document.getElementById('bval').innerText = document.getElementById('brightness').value; }
+function updateSaturationText() { document.getElementById('sval').innerText = parseFloat(document.getElementById('saturation').value).toFixed(1); }
 async function sendContrast() { try { await fetch('/setcontrast?c=' + document.getElementById('contrast').value); } catch(e) {} }
 async function sendBrightness() { try { await fetch('/setbrightness?b=' + document.getElementById('brightness').value); } catch(e) {} }
+async function sendSaturation() { try { await fetch('/setsaturation?s=' + document.getElementById('saturation').value); } catch(e) {} }
 async function sendBg() { try { await fetch('/setbg?c=' + document.getElementById('bgcolor').value); } catch(e) {} }
 async function sendScale() { try { await fetch('/setscale?s=' + document.getElementById('scale').value); } catch(e) {} }
 async function sendScaling() { try { await fetch('/setscaling?s=' + document.getElementById('scaling').value); } catch(e) {} }
@@ -576,6 +580,7 @@ async function upd() {
       const s = await sr.json(); if (s.mode && s.mode !== currentClientMode) { currentClientMode = s.mode; updateModeUI(); }
       if (s.contrast !== undefined && document.activeElement !== document.getElementById('contrast')) { document.getElementById('contrast').value = s.contrast; updateContrastText(); }
       if (s.brightness !== undefined && document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
+      if (s.saturation !== undefined && document.activeElement !== document.getElementById('saturation')) { document.getElementById('saturation').value = s.saturation; updateSaturationText(); }
       if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) document.getElementById('scale').value = s.scale;
       if (s.scaling !== undefined && document.activeElement !== document.getElementById('scaling')) document.getElementById('scaling').value = s.scaling;
       if (s.bg !== undefined && document.activeElement !== document.getElementById('bgcolor')) { currentBgColor = s.bg; document.getElementById('bgcolor').value = s.bg; }
@@ -705,6 +710,8 @@ float imgContrast = 1.0f;
 int16_t contrast_fp = 256;
 float imgBrightness = 0.0f;
 int16_t brightness_val = 0;
+float imgSaturation = 1.0f;
+int16_t saturation_fp = 256;
 uint8_t jpgScale = 1;
 uint8_t scalingMode = 0;   // 0=Stretch, 1=Fit (letterbox), 2=Crop (zoom)
 uint8_t ditherStrength = 4;  // Dither intensity: 0=off, 1-8
@@ -806,6 +813,23 @@ inline int8_t getDitherOffset(int tx, int ty) {
   }
 }
 
+inline void applyImageAdjustments(int& r, int& g, int& b) {
+  if (contrast_fp != 256 || brightness_val != 0) {
+    r = (int)((((r - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    g = (int)((((g - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+    b = (int)((((b - 128) * contrast_fp) >> 8) + 128 + brightness_val);
+  }
+  if (saturation_fp != 256) {
+    int luma = (r * 77 + g * 153 + b * 26) >> 8;
+    r = luma + (((r - luma) * saturation_fp) >> 8);
+    g = luma + (((g - luma) * saturation_fp) >> 8);
+    b = luma + (((b - luma) * saturation_fp) >> 8);
+  }
+  if(r<0) r=0; if(r>255) r=255;
+  if(g<0) g=0; if(g>255) g=255;
+  if(b<0) b=0; if(b>255) b=255;
+}
+
 inline uint32_t manhattanDist(uint8_t c1, uint8_t c2) {
   return (abs(c64_pal_r[c1] - c64_pal_r[c2]) * 2) + 
          (abs(c64_pal_g[c1] - c64_pal_g[c2]) * 4) + 
@@ -855,15 +879,7 @@ inline uint8_t rgb565_to_c64(uint16_t p) {
   int r = (p >> 8) & 0xF8;
   int g = (p >> 3) & 0xFC;
   int b = (p << 3) & 0xF8;
-  
-  if (contrast_fp != 256 || brightness_val != 0) {
-    r = (int)((((r - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    g = (int)((((g - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    b = (int)((((b - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    if(r<0) r=0; if(r>255) r=255;
-    if(g<0) g=0; if(g>255) g=255;
-    if(b<0) b=0; if(b>255) b=255;
-  }
+  applyImageAdjustments(r, g, b);
   
   uint32_t best_dist = 0xFFFFFFFF;
   uint8_t best_col = 0;
@@ -884,14 +900,7 @@ inline uint8_t rgb565_to_dithered_gray(uint16_t p, int tx, int ty) {
   int r = (p >> 8) & 0xF8;
   int g = (p >> 3) & 0xFC;
   int b = (p << 3) & 0xF8;
-  if (contrast_fp != 256 || brightness_val != 0) {
-    r = (int)((((r - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    g = (int)((((g - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    b = (int)((((b - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    if(r<0) r=0; if(r>255) r=255;
-    if(g<0) g=0; if(g>255) g=255;
-    if(b<0) b=0; if(b>255) b=255;
-  }
+  applyImageAdjustments(r, g, b);
   
   int16_t luma = (r * 77 + g * 153 + b * 26) >> 8;
   if (ditherStrength > 0 && ditherAlgo > 0) {
@@ -913,14 +922,7 @@ inline uint8_t rgb565_to_ifli_gray(uint16_t p, int tx, int ty) {
   int r = (p >> 8) & 0xF8;
   int g = (p >> 3) & 0xFC;
   int b = (p << 3) & 0xF8;
-  if (contrast_fp != 256 || brightness_val != 0) {
-    r = (int)((((r - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    g = (int)((((g - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    b = (int)((((b - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-    if(r<0) r=0; if(r>255) r=255;
-    if(g<0) g=0; if(g>255) g=255;
-    if(b<0) b=0; if(b>255) b=255;
-  }
+  applyImageAdjustments(r, g, b);
   
   int16_t luma = (r * 77 + g * 153 + b * 26) >> 8;
   if (ditherStrength > 0 && ditherAlgo > 0) {
@@ -1192,15 +1194,7 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
       int sr = (pix >> 8) & 0xF8;
       int sg = (pix >> 3) & 0xFC;
       int sb = (pix << 3) & 0xF8;
-      
-      if (contrast_fp != 256 || brightness_val != 0) {
-        sr = (int)((((sr - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-        sg = (int)((((sg - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-        sb = (int)((((sb - 128) * contrast_fp) >> 8) + 128 + brightness_val);
-        if(sr<0) sr=0; if(sr>255) sr=255;
-        if(sg<0) sg=0; if(sg>255) sg=255;
-        if(sb<0) sb=0; if(sb>255) sb=255;
-      }
+      applyImageAdjustments(sr, sg, sb);
       
       // If we are in a grayscale mode, force source to monochromatic to avoid color error bleed
       if (IS_GRAY_MODE) {
@@ -1370,6 +1364,19 @@ void handleSetBrightness() {
   }
 }
 
+void handleSetSaturation() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  if (server.hasArg("s")) {
+    imgSaturation = server.arg("s").toFloat();
+    if (imgSaturation < 0.0f) imgSaturation = 0.0f;
+    if (imgSaturation > 2.0f) imgSaturation = 2.0f;
+    saturation_fp = (int16_t)(imgSaturation * 256.0f);
+    server.send(200, "text/plain", "OK");
+  } else {
+    server.send(400, "text/plain", "Missing ?s= param");
+  }
+}
+
 void handleSetBg() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   if (server.hasArg("c")) {
@@ -1499,6 +1506,7 @@ void handleStats() {
                 ",\"connected\":" + String(streamConnected ? 1 : 0) +
                 ",\"contrast\":" + String(imgContrast, 2) +
                 ",\"brightness\":" + String(imgBrightness, 1) +
+                ",\"saturation\":" + String(imgSaturation, 2) +
                 ",\"scale\":" + String(jpgScale) +
                 ",\"dither\":"      + String(ditherStrength) +
                 ",\"ditherType\":" + String(ditherAlgo) +
@@ -1676,6 +1684,8 @@ void old_handleRoot_to_delete() {
     <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
     <span>BR: <span id="bval" class="val">0</span></span>
     <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()" onchange="sendBrightness()">
+    <span>SAT: <span id="sval" class="val">1.0</span></span>
+    <input type="range" id="saturation" min="0.0" max="2.0" step="0.1" value="1.0" oninput="updateSaturationText()" onchange="sendSaturation()">
     <span style="margin-left:4px">SCALE:</span>
     <select id="scale" onchange="sendScale()">
       <option value="1">1:1 (HQ)</option>
@@ -1773,6 +1783,9 @@ function updateContrastText() {
 function updateBrightnessText() {
   document.getElementById('bval').innerText = document.getElementById('brightness').value;
 }
+function updateSaturationText() {
+  document.getElementById('sval').innerText = parseFloat(document.getElementById('saturation').value).toFixed(1);
+}
 async function sendContrast() {
   const c = document.getElementById('contrast').value;
   try { await fetch('/setcontrast?c=' + c); } catch(e) {}
@@ -1780,6 +1793,10 @@ async function sendContrast() {
 async function sendBrightness() {
   const b = document.getElementById('brightness').value;
   try { await fetch('/setbrightness?b=' + b); } catch(e) {}
+}
+async function sendSaturation() {
+  const s = document.getElementById('saturation').value;
+  try { await fetch('/setsaturation?s=' + s); } catch(e) {}
 }
 async function sendBg() {
   const c = document.getElementById('bgcolor').value;
@@ -2126,6 +2143,10 @@ async function upd() {
       if (s.brightness !== undefined && document.activeElement !== document.getElementById('brightness')) {
         document.getElementById('brightness').value = s.brightness;
         updateBrightnessText();
+      }
+      if (s.saturation !== undefined && document.activeElement !== document.getElementById('saturation')) {
+        document.getElementById('saturation').value = s.saturation;
+        updateSaturationText();
       }
       if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) {
         document.getElementById('scale').value = s.scale;
@@ -2515,6 +2536,7 @@ void setup() {
   server.on("/setbg", handleSetBg);
   server.on("/setbrightness", handleSetBrightness);
   server.on("/setcontrast", handleSetContrast);
+  server.on("/setsaturation", handleSetSaturation);
   server.on("/setdither", handleSetDither);
   server.on("/setdithertype", handleSetDitherType);
   server.on("/setscale", handleSetScale);

@@ -1,7 +1,7 @@
 // Pure JavaScript port of ESPStreamer C++ engine - VERSION 9.0 (Sync with C++ Reference)
 window.C64Engine = (function () {
     let currentMode = 'mc_gray', isRunning = false, connected = false;
-    let cf = 256, bv = 0, ds = 4, da = 2, bgC = 0, sc = 0, palIdx = 0, fCount = 0, tKB = 0;
+    let cf = 256, bv = 0, sf = 256, ds = 4, da = 2, bgC = 0, sc = 0, palIdx = 0, fCount = 0, tKB = 0;
     
     // Pre-allocated arrays to match ESP32 buffer sizes and avoid GC
     const preAllocated = {
@@ -38,6 +38,23 @@ window.C64Engine = (function () {
                (Math.abs(b - pal.b[c2]));
     }
 
+    function adjustColor(r, g, b) {
+        r = (((r - 128) * cf) >> 8) + 128 + bv;
+        g = (((g - 128) * cf) >> 8) + 128 + bv;
+        b = (((b - 128) * cf) >> 8) + 128 + bv;
+        if (sf !== 256) {
+            const l = (r * 77 + g * 153 + b * 26) >> 8;
+            r = l + (((r - l) * sf) >> 8);
+            g = l + (((g - l) * sf) >> 8);
+            b = l + (((b - l) * sf) >> 8);
+        }
+        return [
+            Math.max(0, Math.min(255, r)),
+            Math.max(0, Math.min(255, g)),
+            Math.max(0, Math.min(255, b))
+        ];
+    }
+
     function process(idat, wT, isH, isF, isI, isG) {
         const cb = preAllocated.cb; 
         const aP = isG ? grayIdx : [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
@@ -49,9 +66,8 @@ window.C64Engine = (function () {
             for (let y = 0; y < 200; y++) {
                 for (let x = 0; x < wT; x++) {
                     let i = (y * wT + x) * 4, ei = (y * 322 + x) * 3;
-                    let r = (((d[i] - 128) * cf) >> 8) + 128 + bv + er[ei];
-                    let g = (((d[i + 1] - 128) * cf) >> 8) + 128 + bv + er[ei + 1];
-                    let bl = (((d[i + 2] - 128) * cf) >> 8) + 128 + bv + er[ei + 2];
+                    let [r, g, bl] = adjustColor(d[i], d[i + 1], d[i + 2]);
+                    r += er[ei]; g += er[ei + 1]; bl += er[ei + 2];
                     r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); bl = Math.max(0, Math.min(255, bl));
 
                     let bc = aP[0], bd = (Math.abs(r - pal.r[bc]) * 2) + (Math.abs(g - pal.g[bc]) * 4) + Math.abs(bl - pal.b[bc]);
@@ -90,9 +106,7 @@ window.C64Engine = (function () {
             for (let y = 0; y < 200; y++) {
                 for (let x = 0; x < wT; x++) {
                     let i = (y * wT + x) * 4;
-                    let r = (((d[i] - 128) * cf) >> 8) + 128 + bv;
-                    let g = (((d[i + 1] - 128) * cf) >> 8) + 128 + bv;
-                    let bl = (((d[i + 2] - 128) * cf) >> 8) + 128 + bv;
+                    let [r, g, bl] = adjustColor(d[i], d[i + 1], d[i + 2]);
                     if (da > 0 && ds > 0) {
                         let thr = 0; 
                         if (da == 1) thr = b4[(y % 4) * 4 + (x % 4)] / 4;
@@ -317,8 +331,8 @@ window.C64Engine = (function () {
                 new Uint8Array(r).set(dataToReturn); 
                 return { ok: true, arrayBuffer: async () => r }; 
             }
-            if (p.startsWith('/stats')) return { ok: true, json: async () => ({ frames: fCount, mode: currentMode, connected: connected, contrast: cf / 256, brightness: bv, bg: bgC, dither: ds, ditherType: da, totalKB: tKB, paletteIdx: palIdx, scale: 1, scaling: sc }) };
-            if (p.startsWith('/setmode')) currentMode = u.searchParams.get('m'); if (p.startsWith('/setcontrast')) cf = Math.floor(parseFloat(u.searchParams.get('c')) * 256); if (p.startsWith('/setbrightness')) bv = parseInt(u.searchParams.get('b')); if (p.startsWith('/setbg')) bgC = parseInt(u.searchParams.get('c')); if (p.startsWith('/setpalette')) { palIdx = parseInt(u.searchParams.get('p')); pal = pals[palIdx]; } if (p.startsWith('/setdither')) ds = parseInt(u.searchParams.get('d')); if (p.startsWith('/setdithertype')) da = parseInt(u.searchParams.get('t')); if (p.startsWith('/setscaling')) sc = parseInt(u.searchParams.get('s')); return { ok: true };
+            if (p.startsWith('/stats')) return { ok: true, json: async () => ({ frames: fCount, mode: currentMode, connected: connected, contrast: cf / 256, brightness: bv, saturation: sf / 256, bg: bgC, dither: ds, ditherType: da, totalKB: tKB, paletteIdx: palIdx, scale: 1, scaling: sc }) };
+            if (p.startsWith('/setmode')) currentMode = u.searchParams.get('m'); if (p.startsWith('/setcontrast')) cf = Math.floor(parseFloat(u.searchParams.get('c')) * 256); if (p.startsWith('/setbrightness')) bv = parseInt(u.searchParams.get('b')); if (p.startsWith('/setsaturation')) sf = Math.floor(parseFloat(u.searchParams.get('s')) * 256); if (p.startsWith('/setbg')) bgC = parseInt(u.searchParams.get('c')); if (p.startsWith('/setpalette')) { palIdx = parseInt(u.searchParams.get('p')); pal = pals[palIdx]; } if (p.startsWith('/setdither')) ds = parseInt(u.searchParams.get('d')); if (p.startsWith('/setdithertype')) da = parseInt(u.searchParams.get('t')); if (p.startsWith('/setscaling')) sc = parseInt(u.searchParams.get('s')); return { ok: true };
         }
     };
 })();
