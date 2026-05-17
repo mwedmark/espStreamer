@@ -402,6 +402,9 @@ async function captureImage() {
 function viewScreenshots() {
   void 0;
   
+  const existingModal = document.getElementById('screenshots-modal');
+  if (existingModal) existingModal.remove();
+
   if (screenshots.length === 0) {
     alert('No screenshots captured yet. Click the CAPTURE button to save frames.');
     return;
@@ -441,11 +444,12 @@ function viewScreenshots() {
   });
   
   html += `<div style="text-align: center; margin-top: 20px;">
-    <button onclick="this.parentElement.parentElement.parentElement.remove()" style="padding: 10px 20px; background: #404080; border: none; border-radius: 8px; color: white; cursor: pointer;">Close</button>
+    <button onclick="document.getElementById('screenshots-modal')?.remove()" style="padding: 10px 20px; background: #404080; border: none; border-radius: 8px; color: white; cursor: pointer;">Close</button>
   </div></div>`;
   
   void 0;
   const modal = document.createElement('div');
+  modal.id = 'screenshots-modal';
   modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000;';
   modal.innerHTML = html;
   document.body.appendChild(modal);
