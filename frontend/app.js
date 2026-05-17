@@ -424,7 +424,7 @@ function viewScreenshots() {
     html += `
       <div style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px;">
         <div style="display: flex; gap: 15px; align-items: center;">
-          <img src="${shot.thumb}" style="width: 160px; height: 200px; image-rendering: pixelated; border: 2px solid #6c8cff; border-radius: 4px;">
+          <img src="${shot.thumb}" style="width: 240px; aspect-ratio: 8 / 5; height: auto; image-rendering: pixelated; object-fit: fill; border: 2px solid #6c8cff; border-radius: 4px;">
           <div style="color: #a0b4ff; font-family: 'Share Tech Mono', monospace;">
             <div><strong>Frame ${index + 1}</strong></div>
             <div>Mode: ${mode.toUpperCase()}</div>
