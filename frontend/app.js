@@ -24,7 +24,12 @@ async function apiFetch(path) {
 }
 function setBackendMode(m) { usePCBackend = (m === 'pc'); document.getElementById('btn-backend-pc').style.borderColor = usePCBackend ? '#40ff40' : '#6c8cff'; if (usePCBackend) window.C64Engine.start(); else window.C64Engine.stop(); syncAll(); }
 function syncAll() { sendContrast(); sendBrightness(); sendBg(); sendPalette(); sendDither(); sendDitherType(); sendScaling(); }
-function toggleMode() { const m = document.getElementById('mode-sel').value; currentClientMode = m; updateModeUI(); apiFetch('/setmode?m=' + m); syncAll(); }
+function resetKungFuStreamBuffers(mode) {
+  if (kungFuWebSocket && kungFuWebSocket.readyState === WebSocket.OPEN) {
+    kungFuWebSocket.send(JSON.stringify({ command: 'reset_buffers', mode }));
+  }
+}
+function toggleMode() { const m = document.getElementById('mode-sel').value; currentClientMode = m; updateModeUI(); resetKungFuStreamBuffers(m); apiFetch('/setmode?m=' + m); syncAll(); }
 function updateModeUI() { isHires = currentClientMode.includes('hr'); isFLI = currentClientMode.includes('fli'); isIFLI = currentClientMode.includes('ifli'); const cv = document.getElementById('c'); cv.width = isHires ? 320 : 160; cv.height = 200; let bge = document.getElementById('badge'); if (bge) { bge.style.display = 'inline-block'; bge.innerText = currentClientMode.toUpperCase().replace(/_/g, ' '); } }
 function updateContrastText() { document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1); }
 function sendContrast() { apiFetch('/setcontrast?c=' + document.getElementById('contrast').value); }

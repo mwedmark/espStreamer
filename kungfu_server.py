@@ -727,9 +727,23 @@ class KungFuFlashSerial:
         self.prev_screen = None
         self.prev_color = None
         self.screen_refresh_frames = 0
+        self.full_refresh_frames = 0
         self.next_buffer = 1
         self.bitmap_buffers = [None, None]
         self.screen_buffers = [None, None]
+
+    def reset_stream_buffers(self, reason="manual"):
+        """Invalidate host-side history and force both C64 banks to be rewritten."""
+        with self.lock:
+            self.prev_mode = None
+            self.prev_screen = None
+            self.prev_color = None
+            self.screen_refresh_frames = 0
+            self.full_refresh_frames = 2
+            self.next_buffer = 1
+            self.bitmap_buffers = [None, None]
+            self.screen_buffers = [None, None]
+        print(f"Stream buffers reset ({reason}); forcing two full C64 refreshes.")
 
     @staticmethod
     def find_kff_port():
@@ -777,6 +791,7 @@ class KungFuFlashSerial:
             self.prev_screen = None
             self.prev_color = None
             self.screen_refresh_frames = 0
+            self.full_refresh_frames = 0
             self.next_buffer = 1
             self.bitmap_buffers = [None, None]
             self.screen_buffers = [None, None]
@@ -807,6 +822,7 @@ class KungFuFlashSerial:
         self.prev_screen = None
         self.prev_color = None
         self.screen_refresh_frames = 0
+        self.full_refresh_frames = 0
         self.next_buffer = 1
         self.bitmap_buffers = [None, None]
         self.screen_buffers = [None, None]
@@ -916,6 +932,7 @@ class KungFuFlashSerial:
             self.prev_screen = None
             self.prev_color = None
             self.screen_refresh_frames = 0
+            self.full_refresh_frames = 0
             self.next_buffer = 1
             self.bitmap_buffers = [None, None]
             self.screen_buffers = [None, None]
@@ -943,6 +960,10 @@ class KungFuFlashSerial:
                 color_pages = color_data.ljust(1024, b'\x00')
 
                 mode_changed = self.prev_mode != mode_byte
+                if mode_changed:
+                    self.full_refresh_frames = max(self.full_refresh_frames, 2)
+
+                force_full_refresh = self.full_refresh_frames > 0
                 screen_changed = mode_changed or self.prev_screen != screen_data
                 color_changed = mode_changed or self.prev_color != color_data
 
@@ -950,8 +971,8 @@ class KungFuFlashSerial:
                     # Screen RAM is double-buffered, so update both banks.
                     self.screen_refresh_frames = 2
 
-                send_screen = self.screen_refresh_frames > 0
-                send_color = color_changed
+                send_screen = force_full_refresh or self.screen_refresh_frames > 0
+                send_color = force_full_refresh or color_changed
 
                 flags = (0x01 if send_screen else 0x00) | (0x02 if send_color else 0x00)
                 full_payload = bytes([mode_byte, bg_color & 0xFF, flags, 0])
@@ -977,7 +998,7 @@ class KungFuFlashSerial:
                             records.append((page, page_data))
                     return records
 
-                if not mode_changed:
+                if not force_full_refresh:
                     bitmap_records = page_records(bitmap_pages, self.bitmap_buffers[target_buffer], 32)
                     screen_records = page_records(screen_pages, self.screen_buffers[target_buffer], 4)
                     color_records = page_records(color_pages, self.prev_color.ljust(1024, b'\x00') if self.prev_color else None, 4)
@@ -1027,6 +1048,8 @@ class KungFuFlashSerial:
                 self.screen_buffers[target_buffer] = screen_pages
                 self.prev_screen = screen_data
                 self.prev_color = color_data
+                if self.full_refresh_frames > 0:
+                    self.full_refresh_frames -= 1
                 if send_screen and not used_delta:
                     self.screen_refresh_frames -= 1
                 elif used_delta:
@@ -1172,6 +1195,16 @@ class WebSocketServer:
                     'command': 'reset',
                     'success': True,
                     'message': 'Reset signal sent'
+                }))
+
+            elif command == 'reset_buffers':
+                mode = data.get('mode', 'unknown')
+                self.kff.reset_stream_buffers(f"mode change to {mode}")
+                await websocket.send(json.dumps({
+                    'type': 'response',
+                    'command': 'reset_buffers',
+                    'success': True,
+                    'message': 'C64 stream buffers will be fully refreshed'
                 }))
 
             elif command == 'list_ports':
