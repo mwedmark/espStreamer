@@ -29,18 +29,19 @@ function resetKungFuStreamBuffers(mode) {
     kungFuWebSocket.send(JSON.stringify({ command: 'reset_buffers', mode }));
   }
 }
+function sendSettingWithC64Reset(path, reason) { resetKungFuStreamBuffers(reason); return apiFetch(path); }
 function toggleMode() { const m = document.getElementById('mode-sel').value; currentClientMode = m; updateModeUI(); resetKungFuStreamBuffers(m); apiFetch('/setmode?m=' + m); syncAll(); }
 function updateModeUI() { isHires = currentClientMode.includes('hr'); isFLI = currentClientMode.includes('fli'); isIFLI = currentClientMode.includes('ifli'); const cv = document.getElementById('c'); cv.width = isHires ? 320 : 160; cv.height = 200; let bge = document.getElementById('badge'); if (bge) { bge.style.display = 'inline-block'; bge.innerText = currentClientMode.toUpperCase().replace(/_/g, ' '); } }
 function updateContrastText() { document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1); }
-function sendContrast() { apiFetch('/setcontrast?c=' + document.getElementById('contrast').value); }
+function sendContrast() { sendSettingWithC64Reset('/setcontrast?c=' + document.getElementById('contrast').value, 'contrast'); }
 function updateBrightnessText() { document.getElementById('bval').innerText = document.getElementById('brightness').value; }
-function sendBrightness() { apiFetch('/setbrightness?b=' + document.getElementById('brightness').value); }
+function sendBrightness() { sendSettingWithC64Reset('/setbrightness?b=' + document.getElementById('brightness').value, 'brightness'); }
 function updateDitherText() { document.getElementById('dval').innerText = document.getElementById('dither').value; }
-function sendDither() { apiFetch('/setdither?d=' + document.getElementById('dither').value); }
-function sendDitherType() { apiFetch('/setdithertype?t=' + document.getElementById('ditherType').value); sendDither(); }
-function sendBg() { const e = document.getElementById('bgcolor'); if (e) apiFetch('/setbg?c=' + e.value); }
-function sendScaling() { const e = document.getElementById('scaling'); if (e) { apiFetch('/setscaling?s=' + e.value); document.getElementById('c').setAttribute('data-scale', e.value); } }
-function sendPalette() { apiFetch('/setpalette?p=' + document.getElementById('pal-sel').value); }
+function sendDither(resetBuffers = true) { const path = '/setdither?d=' + document.getElementById('dither').value; return resetBuffers ? sendSettingWithC64Reset(path, 'dither') : apiFetch(path); }
+function sendDitherType() { sendSettingWithC64Reset('/setdithertype?t=' + document.getElementById('ditherType').value, 'dither type'); sendDither(false); }
+function sendBg() { const e = document.getElementById('bgcolor'); if (e) sendSettingWithC64Reset('/setbg?c=' + e.value, 'background color'); }
+function sendScaling() { const e = document.getElementById('scaling'); if (e) { sendSettingWithC64Reset('/setscaling?s=' + e.value, 'scaling'); document.getElementById('c').setAttribute('data-scale', e.value); } }
+function sendPalette() { sendSettingWithC64Reset('/setpalette?p=' + document.getElementById('pal-sel').value, 'palette'); }
 function download(d, n) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d])); a.download = n; a.click(); }
 
 // Kung Fu Flash WebSocket functions
