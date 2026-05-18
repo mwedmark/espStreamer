@@ -272,30 +272,27 @@ window.C64Engine = (function () {
                                         const pixelAspect = currentMode.includes('hr') ? 1 : 2;
                                         const targetAspect = 1.6; // Visual target aspect (320:200)
                                         const imgAspect = imgS.width / imgS.height;
-                                        
-                                        // Target aspect ratio for the buffer pixels (0.8 for MC, 1.6 for HR)
-                                        const targetPixelAspect = targetAspect / pixelAspect;
 
                                         if (sc === 1) { // FIT
                                             if (imgAspect > targetAspect) {
-                                                // Image is wider: pillarbox (fit width)
+                                                // Image is wider: letterbox (fit width)
                                                 dw = wT;
                                                 dh = (wT * pixelAspect) / imgAspect;
                                                 dy = (200 - dh) / 2;
                                             } else {
-                                                // Image is taller: letterbox (fit height)
+                                                // Image is taller: pillarbox (fit height)
                                                 dh = 200;
                                                 dw = (200 * imgAspect) / pixelAspect;
                                                 dx = (wT - dw) / 2;
                                             }
                                         } else if (sc === 2) { // CROP
-                                            if (imgAspect > targetPixelAspect) {
-                                                // Image is wider than the target buffer ratio: crop sides
-                                                sw = imgS.height * targetPixelAspect;
+                                            if (imgAspect > targetAspect) {
+                                                // Image is wider than the visual target ratio: crop sides
+                                                sw = imgS.height * targetAspect;
                                                 sx = (imgS.width - sw) / 2;
                                             } else {
-                                                // Image is taller than the target buffer ratio: crop top/bottom
-                                                sh = imgS.width / targetPixelAspect;
+                                                // Image is taller than the visual target ratio: crop top/bottom
+                                                sh = imgS.width / targetAspect;
                                                 sy = (imgS.height - sh) / 2;
                                             }
                                         }
