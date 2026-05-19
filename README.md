@@ -41,7 +41,7 @@ NOTE: You should be running all clients (web or VLC) in a second screen to not g
 
 TIP: A cool demo, that I use a lot, is to visit 3d-page that shows different 3d models that you can rotate.
 
-SETTINGS:
+## SETTINGS
 To change the parameters for the actual stream you need to open the "start.bat" file in a text editor and change them manually and then restart the script.
 Resolution (320x200 or 160x200 being the best alternatives) , Frames Per Second (5 to 30 maybe good) and bitrate (400 to 2000 is good values) are the most usuable parameters that can make a difference.
 
@@ -55,22 +55,23 @@ In the web app you can change:
 - Ratio: Different ways of handling the rescaling to either crop or fit the original screen
 - Choose background color, can optimize some images to look much better
 
+## OUTPUT - WHAT DOES IT ACTUALLY DO?
 The web app has 2 dinstinct ways of creating output C64 files:
 - A single image mode which just sets the correct color mode and show the image. Both PRG and CRT can be created.
 - A slideshow C64 app that takes all your CAPTURED images and shows them continously and in a loop.
 - IDEA: There will also be a animation mode which saves images as fast as possible until the CRT are full (about 100 unpacked full koala images) and then creates a C64 animation app that just shows the animation. Like the slideshow but without pause between images.
 
-TEH BOTTOM PART
+## THE BOTTOM PART - HARDWARE CONTROL PART
 
 Information shown is:
 - STATUS - Are we connected to a stream
 - FPS: Total Frames per Second this instant
 - Total: Number of bytes transferred in total through the link.
 
-HARDWARE CONTROL PART
-- You can choose between connecting to a already started instance of VICE or conneting to a running C64 via Kung Fu Flash 1/2 USB-connection.
+You can choose between connecting to a already started instance of VICE or conneting to a running C64 via Kung Fu Flash 1/2 USB-connection.
 
-Description on how to get haradware working:
+## HOW TO START STREAMING
+Description on how to get hardware working:
 
 VICE flow:
 To get VICE working you need to make sure to enable the binary machine monitor at port 6511 which is currently hard-coded in EspStreamer
