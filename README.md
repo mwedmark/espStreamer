@@ -1,5 +1,6 @@
 # espStreamer
-Arduino-based project for Chrome/ESP32-S3 to make it handle a live stream and convert it to C64 compatible image.
+Started as an Arduino-based project for Chrome/ESP32-S3 to make it handle a live stream and convert it to C64 compatible image.
+Going forward the ESP32 is actually not needed but still supported. See below 
 It can create either PRG/CRT files which holds both the viewer and the actual image data or a KOA-file which is just the image data.
 It can also create small slideshows of maximum 3 images in a PRG/CRT file.
 NOTE: CRT export still has bugs after the 2 first images. Needs more work.
@@ -7,7 +8,7 @@ NOTE: CRT export still has bugs after the 2 first images. Needs more work.
 This solution uses a webapp for control/view from a webbrowser(tested on Chrome) and also uses Python script where applicable.
 It is also possible to run this without a ESP32. In this case only a Python environment and webbrowser is needed.
 
-Prereq:
+## PREREQ:
 - Windows (because of powershell)
 - Chrome or other compatible browser.
 - VLC installed on the machine (and in path)
@@ -17,6 +18,7 @@ Prereq:
   You might need to change build settings for the project in ArduinoIde.
 - VICE or other emulator if you want to be able to click on the created PRG/CRT files and see them running directly or stream live into VICE.
 
+## WAYS TO START
 Currently, the application can be used in 2 ways:
 - Running Partly on ESP32, pontially closer to C64. End goal is to have it fully running on ESP32 for mobility, like a cartridge or plug-in device.
 - Running fully in Chrome on a PC/Mac/Linux device. This is optimal for performace. A Proxy written in Python is used.
