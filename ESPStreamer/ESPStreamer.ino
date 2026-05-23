@@ -3,9 +3,9 @@
 #include <HTTPClient.h>
 #include <LittleFS.h>
 #include <TJpg_Decoder.h>
+#include <ESPmDNS.h>
+#include <WiFiManager.h>
 
-const char* ssid = "MagnusAsus_Boa";
-const char* password = "R36RulesAgain";
 const char* streamHost = "192.168.50.145";
 const int   streamPort = 90;
 const char* streamPath = "/pc.mjpg";
@@ -1892,14 +1892,29 @@ void setup() {
   // Clear buffer
   memset(c64_buffer, 0, sizeof(c64_buffer));
 
-  // Connect to WiFi
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  // WiFi Manager setup
+  WiFiManager wm;
+
+  // Uncomment to reset saved WiFi credentials (for testing)
+  // wm.resetSettings();
+
+  // Create a captive portal if WiFi is not configured
+  bool res = wm.autoConnect("C64Streamer-Setup", "");
+  if (!res) {
+    Serial.println("Failed to connect. Rebooting...");
+    delay(3000);
+    ESP.restart();
   }
+
   Serial.println("\nIP: " + WiFi.localIP().toString());
+
+  // Setup mDNS
+  if (!MDNS.begin("c64streamer")) {
+    Serial.println("mDNS init failed!");
+  } else {
+    Serial.println("mDNS initialized - access via http://c64streamer.local");
+    MDNS.addService("http", "tcp", 80);
+  }
 
   // Setup JPEG decoder
   TJpgDec.setJpgScale(1);
