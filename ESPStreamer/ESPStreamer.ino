@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
+#include <LittleFS.h>
 #include <TJpg_Decoder.h>
 
 const char* ssid = "MagnusAsus_Boa";
@@ -11,661 +12,41 @@ const char* streamPath = "/pc.mjpg";
 
 WebServer server(80);
 
-static const char INDEX_HTML[] PROGMEM = R"rawhtml(
-<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>C64 LIVE ENCODER</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    min-height: 100vh;
-    display: flex; flex-direction: column; align-items: center;
-    color: #e0e0ff;
-    font-family: 'Share Tech Mono', monospace;
-    padding: 20px;
-  }
-  h2 {
-    font-size: 28px;
-    letter-spacing: 6px;
-    margin: 20px 0;
-    text-shadow: 0 0 20px rgba(100, 140, 255, 0.6);
-    background: linear-gradient(90deg, #6c8cff, #a87fff, #6c8cff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  .container {
-    background: rgba(20, 20, 50, 0.7);
-    border: 1px solid rgba(100, 140, 255, 0.3);
-    border-radius: 16px;
-    padding: 24px;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05);
-  }
-  canvas {
-    width: 640px; height: 400px;
-    image-rendering: pixelated;
-    border: 3px solid rgba(100, 140, 255, 0.4);
-    border-radius: 8px;
-    background: #000;
-    box-shadow: 0 0 30px rgba(80, 120, 255, 0.15), inset 0 0 60px rgba(0,0,0,0.5);
-    display: block;
-  }
-  .mode-badge {
-    text-align: center;
-    font-size: 11px;
-    letter-spacing: 3px;
-    margin-bottom: 8px;
-    padding: 4px 12px;
-    border-radius: 4px;
-    display: inline-block;
-    transition: all 0.3s;
-  }
-  .mode-badge.mc  { color: #ffd080; background: rgba(255,180,0,0.10); border: 1px solid rgba(255,180,0,0.3); }
-  .mode-badge.hr  { color: #80ffcc; background: rgba(0,255,180,0.10); border: 1px solid rgba(0,255,180,0.3); }
-  .badge-wrap { display:flex; justify-content:center; margin-bottom:10px; }
-  .controls {
-    display: flex; gap: 10px; margin-top: 16px; justify-content: center; flex-wrap: wrap;
-  }
-  .slider-container {
-    display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; font-size: 13px; color: #a0b4ff; flex-wrap: wrap;
-    background: rgba(0,0,0,0.2); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(100,140,255,0.2);
-  }
-  input[type=range] {
-    -webkit-appearance: none; width: 80px; background: rgba(100,140,255,0.2);
-    height: 6px; border-radius: 3px; outline: none;
-  }
-  input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none;
-    width: 16px; height: 16px; border-radius: 50%;
-    background: #6c8cff; cursor: pointer; box-shadow: 0 0 10px rgba(100,140,255,0.5);
-  }
-  select {
-    appearance: none; -webkit-appearance: none;
-    background: rgba(100,140,255,0.2);
-    color: #a0ff90; padding: 4px 12px;
-    border: 1px solid rgba(100,140,255,0.4); border-radius: 4px;
-    font-family: inherit; font-size: 13px; font-weight: bold;
-    cursor: pointer; outline: none;
-  }
-  select option { background: #16213e; color: #a0b4ff; }
-  button {
-    padding: 10px 28px;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 14px;
-    letter-spacing: 2px;
-    cursor: pointer;
-    background: linear-gradient(180deg, rgba(100,140,255,0.2), rgba(60,80,180,0.3));
-    color: #a0b4ff;
-    border: 1px solid rgba(100,140,255,0.4);
-    border-radius: 8px;
-    transition: all 0.2s;
-  }
-  button:hover {
-    background: linear-gradient(180deg, rgba(100,140,255,0.4), rgba(60,80,180,0.5));
-    box-shadow: 0 0 16px rgba(100,140,255,0.3);
-    color: #fff;
-  }
-  #btn-mode.mc {
-    background: linear-gradient(180deg, rgba(255,180,0,0.15), rgba(180,100,0,0.25));
-    color: #ffd080;
-    border-color: rgba(255,180,0,0.4);
-  }
-  #btn-mode.mc:hover {
-    background: linear-gradient(180deg, rgba(255,180,0,0.35), rgba(180,100,0,0.45));
-    box-shadow: 0 0 16px rgba(255,160,0,0.3);
-    color: #fff;
-  }
-  #btn-mode.hr {
-    background: linear-gradient(180deg, rgba(0,255,180,0.15), rgba(0,130,100,0.25));
-    color: #80ffcc;
-    border-color: rgba(0,255,180,0.4);
-  }
-  #btn-mode.hr:hover {
-    background: linear-gradient(180deg, rgba(0,255,180,0.35), rgba(0,130,100,0.45));
-    box-shadow: 0 0 16px rgba(0,255,160,0.3);
-    color: #fff;
-  }
-  #stats {
-    margin-top: 16px;
-    font-size: 12px;
-    color: #7088cc;
-    text-align: center;
-    line-height: 1.8;
-  }
-  #stats .val { color: #a0ff90; }
-  #stats .err { color: #ff6060; }
-  .dot {
-    display: inline-block; width: 8px; height: 8px;
-    border-radius: 50%; margin-right: 6px;
-    background: #444;
-    transition: background 0.3s;
-  }
-  .dot.on { background: #40ff40; box-shadow: 0 0 8px #40ff40; }
-</style>
-</head><body>
-<h2>&#x25C8; C64 LIVE ENCODER &#x25C8;</h2>
-<div class="container">
-  <div class="badge-wrap">
-    <span class="mode-badge mc" id="badge" style="display:none;"></span>
-  </div>
-  <canvas id="c" width="160" height="200"></canvas>
-  <div class="controls">
-    <select id="mode-sel" onchange="toggleMode()" style="padding:10px; font-size:14px; font-family:'Share Tech Mono'; background:#333; color:#fff; border:1px solid #666; cursor:pointer;">
-      <option value="mc_gray">MULTI-COLOR GRAYSCALE</option>
-      <option value="hr_gray">HI-RES GRAYSCALE</option>
-      <option value="mc_color">MULTI-COLOR COLOR</option>
-      <option value="hr_color">HI-RES COLOR</option>
-      <option value="mc_fli">MULTI-COLOR FLI</option>
-      <option value="mc_gray_fli">GRAYSCALE FLI</option>
-      <option value="mc_gray_ifli">GRAYSCALE IFLI</option>
-    </select>
-    <button onclick="captureImage()" style="background: linear-gradient(180deg, rgba(255,100,100,0.2), rgba(180,60,60,0.3)); border-color: rgba(255,100,100,0.4); color:#ffcccc;">&#x1F4F7; CAPTURE</button>
-    <button onclick="save('PRG')">&#x25B6; PRG</button>
-    <button onclick="save('KOA')">&#x25B6; KOA</button>
-    <button onclick="save('CRT')">&#x25B6; CRT</button>
-  </div>
-  <div class="slider-container">
-    <span>CT: <span id="cval" class="val">1.0</span></span>
-    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
-    <span>BR: <span id="bval" class="val">0</span></span>
-    <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()" onchange="sendBrightness()">
-    <span>SAT: <span id="sval" class="val">1.0</span></span>
-    <input type="range" id="saturation" min="0.0" max="2.0" step="0.1" value="1.0" oninput="updateSaturationText()" onchange="sendSaturation()">
-    <span style="margin-left:4px">SCALE:</span>
-    <select id="scale" onchange="sendScale()">
-      <option value="1">1:1 (HQ)</option>
-      <option value="2">1:2 (FAST)</option>
-      <option value="4">1:4 (FASTER)</option>
-      <option value="8">1:8 (FASTEST)</option>
-    </select>
-    <span style="margin-left:8px">RATIO:</span>
-    <select id="scaling" onchange="sendScaling()">
-      <option value="0">STRETCH</option>
-      <option value="1">FIT</option>
-      <option value="2">CROP</option>
-    </select>
-    <span style="margin-left:8px">BG (MC):</span>
-    <select id="bgcolor" onchange="sendBg()" style="padding:4px">
-      <option value="0">0:BLK</option><option value="1">1:WHT</option><option value="2">2:RED</option><option value="3">3:CYN</option>
-      <option value="4">4:PUR</option><option value="5">5:GRN</option><option value="6">6:BLU</option><option value="7">7:YEL</option>
-      <option value="8">8:ORG</option><option value="9">9:BRN</option><option value="10">10:LRD</option><option value="11">11:DGY</option>
-      <option value="12">12:MGY</option><option value="13">13:LGN</option><option value="14">14:LBL</option><option value="15">15:LGY</option>
-    </select>
-    <span style="margin-left:8px">PALETTE:</span>
-    <select id="pal-sel" onchange="sendPalette()" style="color:#ffcc80">
-      <option value="0">PEPTO (PAL)</option>
-      <option value="1">COLODORE</option>
-      <option value="2">LEGACY VICE</option>
-      <option value="3">CCS64</option>
-    </select>
-    <span style="margin-left:8px">DITHER:</span>
-    <select id="ditherType" onchange="sendDitherType()">
-      <option value="0">NONE</option>
-      <option value="1">BAYER 4x4</option>
-      <option value="2" selected>BAYER 8x8</option>
-      <option value="3">WHITE NOISE</option>
-      <option value="4">BLUE NOISE</option>
-      <option value="5">FLOYD-STEINBERG</option>
-    </select>
-    <span style="margin-left:4px">STR:</span>
-    <input type="range" id="dither" min="0" max="8" step="1" value="4" style="width:80px" oninput="updateDitherText()" onchange="sendDither()">
-    <span id="dval" class="val">4</span>
-  </div>
-  <div id="stats">
-    <span class="dot" id="dot"></span>
-    <span id="stxt">Connecting...</span>
-  </div>
-  <div id="gallery-container" style="margin-top:20px; width:100%; max-width:640px; display:none; background:rgba(0,0,0,0.3); border:1px solid rgba(100,140,255,0.2); border-radius:8px; padding:10px;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-size:12px;">
-      <span style="color:#a0b4ff;">BUFFER: <span id="gallery-count">0</span> IMAGES (<span id="gallery-size">0</span> KB / <span id="gallery-limit">64</span> KB PRG)</span>
-      <button onclick="clearGallery()" style="padding:4px 10px; font-size:11px;">CLEAR ALL</button>
-    </div>
-    <div id="gallery" style="display:flex; gap:10px; overflow-x:auto; padding-bottom:8px;"></div>
-  </div>
-</div>
-
-<script>
-const palettes = [
-  [[0,0,0], [255,255,255], [104,55,43], [112,164,178], [111,61,134], [88,141,67], [53,40,121], [184,199,111], [111,79,37], [67,57,0], [154,103,89], [68,68,68], [108,108,108], [154,210,132], [108,94,181], [149,149,149]],
-  [[0,0,0], [255,255,255], [129,51,56], [117,205,200], [142,60,151], [86,172,93], [45,48,173], [237,240,175], [142,80,41], [85,56,0], [196,108,113], [74,74,74], [123,123,123], [169,255,159], [112,117,213], [170,170,170]],
-  [[0,0,0], [255,255,255], [136,0,0], [170,255,238], [204,68,204], [0,204,85], [0,0,170], [238,238,119], [221,136,85], [102,68,0], [255,119,119], [51,51,51], [119,119,119], [170,255,102], [0,136,255], [187,187,187]],
-  [[0,0,0], [255,255,255], [192,0,0], [0,255,255], [192,0,192], [0,192,0], [0,0,192], [255,255,0], [192,128,0], [128,64,0], [240,128,128], [64,64,64], [128,128,128], [128,255,128], [128,128,255], [192,192,192]]
-];
-let currentPaletteIdx = 0, c64Pal = palettes[currentPaletteIdx];
-let running = true, isHires = false, isFLI = false, isGrayFLI = false, isIFLI = false, currentClientMode = 'mc_color', currentBgColor = 0;
-let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 0;
-let screenshots = []; // Holds captured buffers
-
-function resizeCanvas(hires) {
-  const cv = document.getElementById('c');
-  cv.width = hires ? 320 : 160; cv.height = 200;
-  cv.style.height = '400px'; cv.style.width = '640px';
-}
-async function toggleMode() {
-  const target = document.getElementById('mode-sel').value;
-  try {
-    const r = await fetch('/setmode?m=' + target + '&t=' + Date.now());
-    if (r.ok) { currentClientMode = target; updateModeUI(); }
-  } catch(e) { console.log('setmode error:', e); }
-}
-function updateModeUI() {
-  document.getElementById('mode-sel').value = currentClientMode;
-  isHires = currentClientMode.startsWith('hr_');
-  isFLI = currentClientMode.includes('_fli');
-  isGrayFLI = currentClientMode === 'mc_gray_fli';
-  isIFLI = currentClientMode === 'mc_gray_ifli';
-  resizeCanvas(isHires);
-}
-function updateContrastText() { document.getElementById('cval').innerText = parseFloat(document.getElementById('contrast').value).toFixed(1); }
-function updateBrightnessText() { document.getElementById('bval').innerText = document.getElementById('brightness').value; }
-function updateSaturationText() { document.getElementById('sval').innerText = parseFloat(document.getElementById('saturation').value).toFixed(1); }
-async function sendContrast() { try { await fetch('/setcontrast?c=' + document.getElementById('contrast').value); } catch(e) {} }
-async function sendBrightness() { try { await fetch('/setbrightness?b=' + document.getElementById('brightness').value); } catch(e) {} }
-async function sendSaturation() { try { await fetch('/setsaturation?s=' + document.getElementById('saturation').value); } catch(e) {} }
-async function sendBg() { try { await fetch('/setbg?c=' + document.getElementById('bgcolor').value); } catch(e) {} }
-async function sendScale() { try { await fetch('/setscale?s=' + document.getElementById('scale').value); } catch(e) {} }
-async function sendScaling() { try { await fetch('/setscaling?s=' + document.getElementById('scaling').value); } catch(e) {} }
-function updateDitherText() { document.getElementById('dval').innerText = document.getElementById('dither').value; }
-async function sendDither() { try { await fetch('/setdither?d=' + document.getElementById('dither').value); } catch(e) {} }
-async function sendDitherType() { try { await fetch('/setdithertype?t=' + document.getElementById('ditherType').value); } catch(e) {} }
-async function sendPalette() {
-  const p = document.getElementById('pal-sel').value;
-  try {
-    const r = await fetch('/setpalette?p=' + p);
-    if (r.ok) { currentPaletteIdx = parseInt(p); c64Pal = palettes[currentPaletteIdx]; }
-  } catch(e) {}
+String getContentType(const String& filename) {
+  if (filename.endsWith(".html")) return "text/html";
+  if (filename.endsWith(".css")) return "text/css";
+  if (filename.endsWith(".js")) return "application/javascript";
+  if (filename.endsWith(".json")) return "application/json";
+  if (filename.endsWith(".png")) return "image/png";
+  if (filename.endsWith(".gif")) return "image/gif";
+  if (filename.endsWith(".jpg") or filename.endsWith(".jpeg")) return "image/jpeg";
+  if (filename.endsWith(".ico")) return "image/x-icon";
+  return "application/octet-stream";
 }
 
-async function captureImage() {
-  try {
-    const r = await fetch('/data?t=' + Date.now()); 
-    if(!r.ok) return;
-    const bmp = new Uint8Array(await r.arrayBuffer());
-    const canvas = document.getElementById('c');
-    const thumb = canvas.toDataURL('image/jpeg', 0.5);
-    screenshots.push({
-      mode: currentClientMode,
-      isHires: isHires,
-      isFLI: isFLI,
-      isIFLI: isIFLI,
-      bgColor: currentBgColor,
-      data: bmp,
-      thumb: thumb
-    });
-    updateGalleryUI();
-  } catch(e) { console.error('Capture failed', e); }
-}
+void handleStaticFile() {
+  String path = server.uri();
+  if (path == "/" || path == "") path = "/index.html";
+  if (path.endsWith("/")) path += "index.html";
 
-function removeImage(idx) {
-  screenshots.splice(idx, 1);
-  updateGalleryUI();
-}
-
-function clearGallery() {
-  screenshots = [];
-  updateGalleryUI();
-}
-
-function updateGalleryUI() {
-  const cont = document.getElementById('gallery-container');
-  if (screenshots.length === 0) {
-    cont.style.display = 'none';
+  if (!LittleFS.exists(path)) {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(404, "text/plain", "File not found");
     return;
   }
-  cont.style.display = 'block';
-  document.getElementById('gallery-count').innerText = screenshots.length;
-  
-  let totalBytes = 2048; // Base PRG overhead estimate
-  // Estimate size footprint in memory (approximation for standard formats)
-  for(let s of screenshots) {
-    if(s.isIFLI) totalBytes += 49152;
-    else if(s.isFLI) totalBytes += 28672;
-    else totalBytes += 10240; // 8K bitmap + 1K screen + 1K color
+
+  File file = LittleFS.open(path, "r");
+  if (!file) {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(500, "text/plain", "Failed to open file");
+    return;
   }
-  const kb = (totalBytes/1024).toFixed(1);
-  const sizeSpan = document.getElementById('gallery-size');
-  sizeSpan.innerText = kb;
-  if (totalBytes > 65536) sizeSpan.style.color = '#ffaaaa'; // Warning PRG exceeded
-  else sizeSpan.style.color = '#a0ff90';
-  
-  const g = document.getElementById('gallery');
-  g.innerHTML = '';
-  screenshots.forEach((s, i) => {
-    const d = document.createElement('div');
-    d.style = "position:relative; flex:0 0 auto;";
-    const img = document.createElement('img');
-    img.src = s.thumb;
-    img.style = "width:80px; height:50px; border:1px solid rgba(100,140,255,0.5); border-radius:4px;";
-    const bx = document.createElement('div');
-    bx.innerHTML = '&#10006;';
-    bx.style = "position:absolute; top:-6px; right:-6px; background:#e74c3c; color:white; border-radius:50%; width:16px; height:16px; text-align:center; line-height:16px; font-size:10px; cursor:pointer; box-shadow:0 0 4px #000;";
-    bx.onclick = () => removeImage(i);
-    d.appendChild(img);
-    d.appendChild(bx);
-    g.appendChild(d);
-  });
+
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Cache-Control", "max-age=600");
+  server.streamFile(file, getContentType(path));
+  file.close();
 }
-
-async function save(t) {
-  let isSlideshow = screenshots.length > 0;
-  let bmp, modeType;
-
-  if (!isSlideshow) {
-    const r = await fetch('/data?t=' + Date.now()); 
-    bmp = new Uint8Array(await r.arrayBuffer());
-    modeType = { isHires, isFLI, isIFLI, bgColor: currentBgColor, data: bmp };
-  }
-
-  let f;
-  if (t === 'KOA') {
-    if (isSlideshow) { alert("KOA does not support slideshows."); return; }
-    f = new Uint8Array(10003); f[0] = 0; f[1] = 0x60; f.set(bmp.subarray(0, 8000), 2);
-    for (let i = 0; i < 1000; i++) { f[8002 + i] = bmp[8000 + i]; f[9002 + i] = bmp[9000 + i]; }
-    f[10002] = currentBgColor; download(f, 'img.koa'); return;
-  }
-  
-  if (isSlideshow && (t === 'PRG' || t === 'CRT')) {
-    // Generate Custom PRG Slideshow for Standard Modes
-    const num = screenshots.length;
-    const totalSize = 14337 + (num * 10240); // 14337 offset aligns payload to start precisely at C64 memory address $4000
-    const basePayload = new Uint8Array(256);
-    basePayload[0]=1; basePayload[1]=8;
-    basePayload.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00],2);
-    const code = [
-      0x78,0xD8,0xA9,0x37,0x85,0x01,0xA9,0x03,0x8D,0x00,0xDD,0xA9,0x3B,0x8D,0x11,0xD0,
-      0xA9,0x18,0x8D,0x18,0xD0,0xA9,0x00,0x8D,0x02,0xDC,0x8D,0x03,0xDC,0x85,0x02,0xA6,
-      0x02,0xBD,0xB0,0x08,0x85,0xFB,0xA9,0x00,0x85,0xFA,0xA9,0x20,0x85,0xFD,0x85,0xFC,
-      0xA2,0x20,0x20,0x9B,0x08,0xA9,0x04,0x85,0xFD,0xA9,0x00,0x85,0xFC,0xA2,0x04,0x20,
-      0x9B,0x08,0xA9,0xD8,0x85,0xFD,0xA9,0x00,0x85,0xFC,0xA2,0x04,0x20,0x9B,0x08,0xA6,
-      0x02,0xBD,0xC0,0x08,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xBD,0xD0,0x08,0x8D,0x16,0xD0,
-      0xAD,0x01,0xDC,0xC9,0xFF,0xD0,0x0A,0xAD,0x00,0xDC,0xC9,0xFF,0xD0,0x03,0x4C,0x6D,
-      0x08,0xAD,0x01,0xDC,0xC9,0xFF,0xD0,0xF9,0xAD,0x00,0xDC,0xC9,0xFF,0xD0,0xF2,0xE6,
-      0x02,0xA5,0x02,0xC9, num, 0xD0,0x04,0xA9,0x00,0x85,0x02,0x4C,0x2C,0x08,0xA0,0x00,
-      0xB1,0xFA,0x91,0xFC,0xC8,0xD0,0xF9,0xE6,0xFB,0xE6,0xFD,0xCA,0xD0,0xF2,0x60
-    ];
-    basePayload.set(code, 14);
-    for(let i=0; i<num; i++) {
-      let s = screenshots[i];
-      basePayload[177 + i] = 0x40 + (i * 0x28); // $40, $68, $90 ... Memory pointers
-      basePayload[193 + i] = s.bgColor; 
-      basePayload[209 + i] = s.isHires ? 0xC8 : 0xD8;
-    }
-    f = new Uint8Array(totalSize);
-    f.set(basePayload, 0);
-    for(let i=0; i<num; i++) {
-        let s = screenshots[i];
-        let off = 14337 + (i * 10240);
-        f.set(s.data.subarray(0, 8000), off); // Bitmap
-        f.set(s.data.subarray(8000, 9000), off + 8192); // Screen
-        f.set(s.data.subarray(9000, 10000), off + 9216); // Color
-    }
-    if (t === 'PRG') {
-      download(f, 'slideshow.prg');
-      return;
-    }
-    // For CRT, f falls through to the CRT generation block below!
-  }
-  if (t === 'KOA') {
-    f = new Uint8Array(10003); f[0] = 0; f[1] = 0x60; f.set(bmp.subarray(0, 8000), 2);
-    for (let i = 0; i < 1000; i++) { f[8002 + i] = bmp[8000 + i]; f[9002 + i] = bmp[9000 + i]; }
-    f[10002] = currentBgColor; download(f, 'img.koa'); return;
-  }
-  if (!isSlideshow && isIFLI) {
-    f = new Uint8Array(49155); f[0] = 1; f[1] = 8; f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
-    const asm = [0x78,0xD8,0xA9,0x37,0x85,0x01,0xA9,0x34,0x85,0x01,0xA9,0x00,0x85,0xFC,0x85,0xFE,0xA9,0x80,0x85,0xFD,0xA9,0xC0,0x85,0xFF,0xA2,0x40,0xA0,0x00,0xB1,0xFC,0x91,0xFE,0xC8,0xD0,0xF9,0xE6,0xFD,0xE6,0xFF,0xCA,0xD0,0xF2,0xA9,0x35,0x85,0x01,0xA2,0x00,0x8A,0x29,0x07,0x09,0x38,0x9D,0x00,0x09,0x8A,0x29,0x07,0x0A,0x0A,0x0A,0x0A,0x09,0x08,0x9D,0x00,0x0A,0xE8,0xE0,0xC8,0xD0,0xE7,0xA2,0x00,0xBD,0x00,0x10,0x9D,0x00,0xD8,0xBD,0xFA,0x10,0x9D,0xFA,0xD8,0xBD,0xF4,0x11,0x9D,0xF4,0xD9,0xBD,0xEE,0x12,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,0xD0,0xE3,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,0xD8,0x8D,0x16,0xD0,0xA9,currentBgColor,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA9,0x08,0x8D,0x18,0xD0,0xA9,0x02,0x85,0x02,0xAD,0x12,0xD0,0xC9,0xF8,0xD0,0xF9,0xA5,0x02,0x49,0x02,0x85,0x02,0x8D,0x00,0xDD,0xAD,0x11,0xD0,0x30,0xFB,0xAD,0x12,0xD0,0xC9,0x2F,0xD0,0xF9,0xA2,0x07,0xCA,0xD0,0xFD,0xEA,0xA0,0x00,0xB9,0x00,0x0A,0x8D,0x18,0xD0,0xB9,0x00,0x09,0x8D,0x11,0xD0,0xC8,0xB9,0x00,0x0A,0xC0,0xC8,0xD0,0xEF,0x4C,0x90,0x08];
-    f.set(asm, 14); const o = a => a - 2049 + 2;
-    for(let i=0; i<1000; i++) f[o(0x1000)+i] = bmp[16000+i];
-    for(let i=0; i<8192; i++) {
-        f[o(0x4000)+i] = bmp[8000+i]; f[o(0x6000)+i] = i < 8000 ? bmp[i] : 0;
-        f[o(0x8000)+i] = bmp[17000+8000+i]; f[o(0xA000)+i] = i < 8000 ? bmp[17000+i] : 0;
-    }
-  } else if (!isSlideshow && isFLI) {
-    f = new Uint8Array(30721); f[0] = 1; f[1] = 8; f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
-    const asm = [0x78,0xD8,0xA9,0x37,0x85,0x01,0xA2,0x00,0x8A,0x29,0x07,0x09,0x38,0x9D,0x00,0x09,0x8A,0x29,0x07,0x0A,0x0A,0x0A,0x0A,0x09,0x08,0x9D,0x00,0x0A,0xE8,0xE0,0xC8,0xD0,0xE7,0xA2,0x00,0xBD,0x00,0x10,0x9D,0x00,0xD8,0xBD,0xFA,0x10,0x9D,0xFA,0xD8,0xBD,0xF4,0x11,0x9D,0xF4,0xD9,0xBD,0xEE,0x12,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,0xD0,0xE3,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,0xD8,0x8D,0x16,0xD0,0xA9,currentBgColor,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA9,0x08,0x8D,0x18,0xD0,0xA9,0x02,0x8D,0x00,0xDD,0xAD,0x12,0xD0,0xC9,0xF8,0xD0,0xF9,0xAD,0x11,0xD0,0x30,0xFB,0xAD,0x12,0xD0,0xC9,0x2F,0xD0,0xF9,0xA2,0x07,0xCA,0xD0,0xFD,0xEA,0xA0,0x00,0xB9,0x00,0x0A,0x8D,0x18,0xD0,0xB9,0x00,0x09,0x8D,0x11,0xD0,0xC8,0xB9,0x00,0x0A,0xC0,0xC8,0xD0,0xEF,0x4C,0x69,0x08];
-    f.set(asm, 14); for(let i=0; i<8192; i++) f[14337+i] = bmp[8000+i];
-    for(let i=0; i<8000; i++) f[22529+i] = bmp[i]; for(let i=0; i<1000; i++) f[2049+i] = bmp[16000+i];
-  } else if (!isSlideshow) {
-    f = new Uint8Array(14145); f[0] = 1; f[1] = 8; f.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 2);
-    const asm = [0x78,0xD8,0xA9,0x37,0x85,0x01,0xA9,0x03,0x8D,0x00,0xDD,0xA9,0x3B,0x8D,0x11,0xD0,0xA9,(isHires?0xC8:0xD8),0x8D,0x16,0xD0,0xA9,0x18,0x8D,0x18,0xD0,0xA9,currentBgColor,0x8D,0x20,0xD0,0x8D,0x21,0xD0,0xA2,0x00,0xBD,0x70,0x08,0x9D,0x00,0x04,0xBD,0x6A,0x09,0x9D,0xFA,0x04,0xBD,0x64,0x0A,0x9D,0xF4,0x05,0xBD,0x5E,0x0B,0x9D,0xEE,0x06,0xE8,0xE0,0xFA,0xD0,0xE3,0xA2,0x00,0xBD,0x58,0x0C,0x9D,0x00,0xD8,0xBD,0x52,0x0D,0x9D,0xFA,0xD8,0xBD,0x4C,0x0E,0x9D,0xF4,0xD9,0xBD,0x46,0x0F,0x9D,0xEE,0xDA,0xE8,0xE0,0xFA,0xD0,0xE3,0x4C,0x6D,0x08];
-    f.set(asm, 14); for(let i=0; i<1000; i++) f[113+i]=bmp[8000+i];
-    for(let i=0; i<1000; i++) f[1113+i]=bmp[9000+i]; f.set(bmp.subarray(0,8000), 6145);
-  }
-
-  if (t === 'PRG' && !isSlideshow) { download(f, isIFLI ? 'ifli.prg' : (isFLI ? 'fli.prg' : (isHires ? 'hires.prg' : 'v.prg'))); }
-  else if (t === 'CRT') {
-    // Handling CRT Export
-    let payload;
-    let nBanks;
-
-    if (isSlideshow) {
-        // Just mirror the PRG payload to a CRT cart so it automatically runs from memory!
-        // We already built 'f' in the PRG step block, so this generates identical functionality.
-        payload = f.subarray(2);
-        nBanks = Math.ceil(payload.length / 8192);
-    } else {
-        payload = f.subarray(2); 
-        nBanks = Math.ceil(payload.length / 8192);
-    }
-
-    // EasyFlash CRT (type 32) - boots in Ultimax: ROMH at $E000, reset vec at $FFFC/$FFFD
-    // Each bank requires TWO chip packets: ROML ($8000) and ROMH ($A000 -> $E000)
-
-    // --- 64-byte CRT header ---
-    const h = new Uint8Array(64);
-    h.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0x00); // "C64 CARTRIDGE   "
-    h.set([0x00,0x00,0x00,0x40], 0x10); // header length = 64, big-endian
-    h.set([0x01,0x00], 0x14);           // version 1.0
-    h.set([0x00,0x20], 0x16);           // type 32 = EasyFlash, big-endian
-    h[0x18] = 0x00;                     // EXROM asserted
-    h[0x19] = 0x00;                     // GAME asserted
-    h.set(new TextEncoder().encode("ESPSTREAMER").subarray(0,32), 0x20);
-    const crt = [h];
-
-    // --- CHIP packet builder (addr: $8000=ROML, $A000=ROMH->Ultimax $E000) ---
-    const makeChip = (bank, loadAddr, data8k) => {
-      const pkt = new Uint8Array(16 + 8192);
-      pkt.set([0x43,0x48,0x49,0x50], 0x00);                         // "CHIP"
-      pkt.set([0x00,0x00,0x20,0x10], 0x04);                         // length = 16+8192
-      pkt.set([0x00,0x00], 0x08);                                    // type = ROM
-      pkt.set([(bank>>8)&0xFF, bank&0xFF], 0x0A);                   // bank number
-      pkt.set([(loadAddr>>8)&0xFF, loadAddr&0xFF], 0x0C);           // load address
-      pkt.set([0x20,0x00], 0x0E);                                    // size = 8192
-      pkt.set(data8k, 0x10);
-      return pkt;
-    };
-
-    // --- Boot code: 2-phase EasyFlash loader ---
-    // Problem: when executing from ROMH at $E000, changing $DE00 (bank select)
-    // replaces our ROMH with the new bank's ROMH → instant crash.
-    // Solution: Phase 1 copies Phase 2 to RAM ($0200), jumps there.
-    //           Phase 2 runs from RAM and freely changes banks via $DE00.
-    //
-    // Phase 1 (ROMH at $E000, 23 bytes):
-    //   Init stack/CPU port, copy 67-byte Phase2 from ROMH[$E017] to RAM[$0200], JMP $0200
-    //
-    // Phase 2 (RAM at $0200, 67 bytes):
-    //   Loop banks 1..N: STA $DE00 (stays Ultimax) → read ROML $8000 → copy to $0801+
-    //   Write $03 to $DE02 (VICE mode reg) AND $DFFF (real-HW mode reg) → disable cart
-    //   JMP $0801
-    //
-    // Verified offsets (Python assembler):
-    //   BNE byte_loop  at P2+$25: rel=0xF9 (-7)
-    //   BNE page_loop  at P2+$2E: rel=0xEE (-18)
-    //   BNE copy_bank  at P2+$36: rel=0xD4 (-44)
-    //   BPL copy_loop  at P1+$12: rel=0xF7 (-9)
-
-    const romh = new Uint8Array(8192).fill(0xFF);
-
-    // Phase 1: 23 bytes, runs at $E000
-    // Phase 1: 23 bytes, runs at $E000
-    const phase1 = [
-      0x78,0xD8,0xA2,0xFF,0x9A, // SEI; CLD; LDX #$FF; TXS
-      0xA9,0x37,0x85,0x01,      // LDA #$37; STA $01
-      0xA2,0,                   // placeholder for LDX len
-      // copy_loop at $E00B:
-      0xBD,0x00,0xE0,           // placeholder for LDA $E0XX,X
-      0x9D,0x00,0x02,           // STA $0200,X
-      0xCA,                     // DEX
-      0x10,0xF7,                // BPL copy_loop (rel -9)
-      0x4C,0x00,0x02            // JMP $0200
-    ];
-
-    // Phase 2: Runs at $0200
-    const phase2 = [
-      0xA9,0x06,0x8D,0x02,0xDE, // LDA #$06; STA $DE02
-      0xA9,0x01,0x85,0xFD,  // LDA #1; STA $FD (bank counter)
-      0xA9,0x01,0x85,0xFB,  // LDA #1; STA $FB (dst lo $0801)
-      0xA9,0x08,0x85,0xFC,  // LDA #8; STA $FC (dst hi)
-      // copy_bank ($0211):
-      0xA5,0xFD,0x8D,0x00,0xDE, // LDA $FD; STA $DE00 (select bank)
-      0xA9,0x00,0x85,0xFE,      // LDA #0; STA $FE (src lo)
-      0xA9,0x80,0x85,0xFF,      // LDA #$80; STA $FF (src hi -> $8000)
-      0xA9,0x20,0x8D,0x00,0x03, // LDA #$20; STA $0300 (32 pages)
-      // page_loop ($0223):
-      0xA0,0x00,                // LDY #0
-      // byte_loop ($0225):
-      0xB1,0xFE,0x91,0xFB,0xC8,0xD0,0xF9, // LDA(src),Y; STA(dst),Y; INY; BNE byte_loop (rel -7)
-      0xE6,0xFC,0xE6,0xFF,      // INC $FC; INC $FF
-      0xCE,0x00,0x03,0xD0,0xEE, // DEC $0300; BNE page_loop (rel -18)
-      0xE6,0xFD,0xA5,0xFD,      // INC $FD; LDA $FD
-      0xC9,(nBanks+1),0xD0,0xD4, // CMP #nBanks+1; BNE copy_bank (rel -44)
-      // done: disable cart, JMP $080D
-      0xA9,0x04,0x8D,0x02,0xDE,0x8D,0xFF,0xDF, // LDA #4; STA $DE02; STA $DFFF
-      0x4C,0x0D,0x08            // JMP $080D
-    ];
-
-    // Update Phase 1 with actual Phase 2 length and start offset
-    phase1[10] = phase2.length - 1;
-    phase1[12] = 23; // offset $17 (23 decimal)
-
-    romh.set(phase1, 0);
-    romh.set(phase2, phase1.length);        // phase2 at ROMH offset $17 = $E017
-    romh[0x1FFA] = 0x00; romh[0x1FFB] = 0xE0; // NMI  vec -> $E000
-    romh[0x1FFC] = 0x00; romh[0x1FFD] = 0xE0; // Reset vec -> $E000
-    romh[0x1FFE] = 0x01; romh[0x1FFF] = 0xE0; // IRQ  vec -> $E001 (SEI keeps IRQs off)
-
-    // Bank 0: empty ROML + boot ROMH
-    const emptyRoml = new Uint8Array(8192).fill(0xFF);
-    const emptyRomh = new Uint8Array(8192).fill(0xFF);
-    crt.push(makeChip(0, 0x8000, emptyRoml));
-    crt.push(makeChip(0, 0xA000, romh));
-
-    // Banks 1..N: payload in ROML ($8000) + empty ROMH
-    for (let b = 0; b < nBanks; b++) {
-      const chunk = new Uint8Array(8192).fill(0xFF);
-      chunk.set(payload.subarray(b * 8192, (b + 1) * 8192));
-      crt.push(makeChip(b + 1, 0x8000, chunk));
-      crt.push(makeChip(b + 1, 0xA000, emptyRomh));
-    }
-
-    const finalSize = crt.reduce((acc, arr) => acc + arr.length, 0);
-    const combined = new Uint8Array(finalSize);
-    let off = 0;
-    for (const c of crt) { combined.set(c, off); off += c.length; }
-    download(combined, 'stream.crt');
-  }
-}
-function download(d, n) {
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d]));
-  a.download = n; a.click();
-}
-async function upd() {
-  try {
-    const srPromise = fetch('/stats?t=' + Date.now()); const rPromise = fetch('/data?t=' + Date.now());
-    const [sr, r] = await Promise.all([srPromise, rPromise]);
-    if (sr.ok) {
-      const s = await sr.json(); if (s.mode && s.mode !== currentClientMode) { currentClientMode = s.mode; updateModeUI(); }
-      if (s.contrast !== undefined && document.activeElement !== document.getElementById('contrast')) { document.getElementById('contrast').value = s.contrast; updateContrastText(); }
-      if (s.brightness !== undefined && document.activeElement !== document.getElementById('brightness')) { document.getElementById('brightness').value = s.brightness; updateBrightnessText(); }
-      if (s.saturation !== undefined && document.activeElement !== document.getElementById('saturation')) { document.getElementById('saturation').value = s.saturation; updateSaturationText(); }
-      if (s.scale !== undefined && document.activeElement !== document.getElementById('scale')) document.getElementById('scale').value = s.scale;
-      if (s.scaling !== undefined && document.activeElement !== document.getElementById('scaling')) document.getElementById('scaling').value = s.scaling;
-      if (s.bg !== undefined && document.activeElement !== document.getElementById('bgcolor')) { currentBgColor = s.bg; document.getElementById('bgcolor').value = s.bg; }
-      if (s.dither !== undefined && document.activeElement !== document.getElementById('dither')) { document.getElementById('dither').value = s.dither; updateDitherText(); }
-      if (s.ditherType !== undefined && document.activeElement !== document.getElementById('ditherType')) document.getElementById('ditherType').value = s.ditherType;
-      if (s.paletteIdx !== undefined && document.activeElement !== document.getElementById('pal-sel')) { currentPaletteIdx = s.paletteIdx; c64Pal = palettes[s.paletteIdx]; document.getElementById('pal-sel').value = s.paletteIdx; }
-
-      const now = Date.now();
-      if (lastStatsTime > 0) {
-        const dt = (now - lastStatsTime) / 1000.0;
-        if (dt >= 1.0) { currentFPS = ((s.frames - lastFrames) / dt).toFixed(1); currentKBs = ((s.totalKB - lastKB) / dt).toFixed(1); lastStatsTime = now; lastFrames = s.frames; lastKB = s.totalKB; }
-      } else { lastStatsTime = now; lastFrames = s.frames; lastKB = s.totalKB; }
-      const dot = document.getElementById('dot'); const stxt = document.getElementById('stxt');
-      dot.className = s.connected ? 'dot on' : 'dot';
-      stxt.innerHTML = 'Status: ' + (s.connected ? '<span class="val">LIVE</span>' : '<span class="err">DISCONNECTED</span>') + ' &nbsp;|&nbsp; FPS: <span class="val">' + Math.max(0, currentFPS) + '</span> &nbsp;|&nbsp; <span class="val">' + Math.max(0, currentKBs) + '</span> KB/s &nbsp;|&nbsp; Total: <span class="val">' + s.totalKB + '</span> KB';
-    }
-    if (!r.ok) return;
-    const d = new Uint8Array(await r.arrayBuffer()); const cv = document.getElementById('c'); const ctx = cv.getContext('2d');
-    if (isIFLI) {
-      const img = ctx.createImageData(160, 200); const bgCol = c64Pal[d[34000]];
-      for (let by = 0; by < 200; by++) {
-        let charRow = Math.floor(by / 8), py = by % 8, screenBank = py * 1024;
-        for (let bx = 0; bx < 40; bx++) {
-          let cellIdx = charRow * 40 + bx, byteA = d[cellIdx * 8 + py], sByA = d[8000 + screenBank + cellIdx], cByA = d[16000 + cellIdx];
-          let colsA = [ bgCol, c64Pal[sByA >> 4], c64Pal[sByA & 0x0F], c64Pal[cByA & 0x0F] ];
-          let cellB = cellIdx + 17000, offB = 17000, byteB2 = d[offB + cellIdx * 8 + py], sByB = d[offB + 8000 + screenBank + cellIdx], cByB = d[offB + 16000 + cellIdx];
-          let colsB = [ bgCol, c64Pal[sByB >> 4], c64Pal[sByB & 0x0F], c64Pal[cByB & 0x0F] ];
-          for (let px = 0; px < 4; px++) {
-            let colA = colsA[(byteA >> ((3 - px) * 2)) & 3] || [0,0,0], colB = colsB[(byteB2 >> ((3 - px) * 2)) & 3] || [0,0,0], outIdx = (by * 160 + bx * 4 + px) * 4;
-            img.data[outIdx] = (colA[0] + colB[0]) >> 1; img.data[outIdx+1] = (colA[1] + colB[1]) >> 1; img.data[outIdx+2] = (colA[2] + colB[2]) >> 1; img.data[outIdx+3] = 255;
-          }
-        }
-      }
-      ctx.putImageData(img, 0, 0); ctx.fillStyle = "rgba(200, 200, 200, 0.9)"; ctx.font = "bold 8px monospace"; ctx.fillText("IFLI GRAY", 110, 10);
-    } else if (isFLI) {
-      const img = ctx.createImageData(160, 200); const bgCol = c64Pal[d[17000]];
-      for (let by = 0; by < 200; by++) {
-        let charRow = Math.floor(by / 8), py = by % 8, screenBank = py * 1024;
-        for (let bx = 0; bx < 40; bx++) {
-          let cellIdx = charRow * 40 + bx, byte = d[cellIdx * 8 + py], screenByte = d[8000 + screenBank + cellIdx], colorByte = d[16000 + cellIdx];
-          let cols = [ bgCol, c64Pal[screenByte >> 4], c64Pal[screenByte & 0x0F], c64Pal[colorByte & 0x0F] ];
-          for (let px = 0; px < 4; px++) {
-            let col = cols[(byte >> ((3 - px) * 2)) & 3] || [0,0,0], outIdx = (by * 160 + bx * 4 + px) * 4;
-            img.data[outIdx] = col[0]; img.data[outIdx+1] = col[1]; img.data[outIdx+2] = col[2]; img.data[outIdx+3] = 255;
-          }
-        }
-      }
-      ctx.putImageData(img, 0, 0); ctx.fillStyle = isGrayFLI ? "rgba(200, 200, 200, 0.9)" : "rgba(0, 255, 180, 0.7)"; ctx.font = "bold 8px monospace"; 
-      ctx.fillText(isGrayFLI ? "GRAY FLI" : "FLI", isGrayFLI ? 120 : 145, 10);
-    } else if (isHires) {
-      const img = ctx.createImageData(320, 200);
-      for (let by = 0; by < 200; by++) {
-        let charRow = Math.floor(by / 8), py = by % 8;
-        for (let bx = 0; bx < 40; bx++) {
-          let cellIdx = charRow * 40 + bx; const byte = d[cellIdx * 8 + py];
-          let screenByte = d[8000 + cellIdx], fgCol = c64Pal[screenByte >> 4], bgCol = c64Pal[screenByte & 0x0F];
-          for (let bit = 7; bit >= 0; bit--) {
-            const px = bx * 8 + (7 - bit); const isFg = (byte >> bit) & 1; const c = isFg ? fgCol : bgCol; const idx = (by * 320 + px) * 4;
-            img.data[idx] = c[0]; img.data[idx+1] = c[1]; img.data[idx+2] = c[2]; img.data[idx+3] = 255;
-          }
-        }
-      }
-      ctx.putImageData(img, 0, 0);
-    } else {
-      const img = ctx.createImageData(160, 200); let bgCol = c64Pal[currentBgColor];
-      for (let by = 0; by < 200; by++) {
-        let charRow = Math.floor(by / 8), py = by % 8;
-        for (let bx = 0; bx < 40; bx++) {
-          let cellIdx = charRow * 40 + bx, byte = d[cellIdx * 8 + py], screenByte = d[8000 + cellIdx], colorByte = d[9000 + cellIdx];
-          let cols = [ bgCol, c64Pal[screenByte >> 4], c64Pal[screenByte & 0x0F], c64Pal[colorByte & 0x0F] ];
-          for (let px = 0; px < 4; px++) {
-            let col = cols[(byte >> ((3 - px) * 2)) & 3], outIdx = (by * 160 + bx * 4 + px) * 4;
-            img.data[outIdx] = col[0]; img.data[outIdx+1] = col[1]; img.data[outIdx+2] = col[2]; img.data[outIdx+3] = 255;
-          }
-        }
-      }
-      ctx.putImageData(img, 0, 0);
-    }
-  } catch(e) { console.log('Fetch error:', e); }
-  if (running) setTimeout(upd, 70);
-}
-upd();
-</script>
-</body></html>
-)rawhtml";
 
 //WebServer server(80);
 
@@ -1516,10 +897,6 @@ void handleStats() {
                 ",\"totalKB\":"     + String((uint32_t)(totalBytes / 1024)) + "}";
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(200, "application/json", json);
-}
-
-void handleRoot() {
-  server.send_P(200, "text/html", INDEX_HTML);
 }
 
 /*
@@ -2529,7 +1906,12 @@ void setup() {
   TJpgDec.setCallback(process_output);
 
   // Setup web server
-  server.on("/", handleRoot);
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS Mount Failed!");
+  } else {
+    Serial.println("LittleFS mounted");
+  }
+  server.on("/", handleStaticFile);
   server.on("/data", handleData);
   server.on("/stats", handleStats);
   server.on("/setmode", handleSetMode);
@@ -2542,6 +1924,7 @@ void setup() {
   server.on("/setscale", handleSetScale);
   server.on("/setscaling", handleSetScaling);
   server.on("/setpalette", handleSetPalette);
+  server.onNotFound(handleStaticFile);
   server.begin();
   Serial.println("Web server started");
 }
