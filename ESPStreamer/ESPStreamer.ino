@@ -6,7 +6,7 @@
 #include <ESPmDNS.h>
 #include <WiFiManager.h>
 
-const char* streamHost = "192.168.50.145";
+const char* streamHost = "c64streamer.local";
 const int   streamPort = 90;
 const char* streamPath = "/pc.mjpg";
 
