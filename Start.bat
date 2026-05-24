@@ -29,10 +29,21 @@ for /f %%a in ('powershell -command "(Get-CimInstance Win32_VideoController | Wh
 for /f %%a in ('powershell -command "(Get-CimInstance Win32_VideoController | Where-Object { $_.CurrentVerticalResolution -gt 0 } | Select-Object -First 1).CurrentVerticalResolution"') do set SCREEN_H=%%a
 echo [+] Hardware Resolution: %SCREEN_W% x %SCREEN_H%
 
+:: --- Get Local IP Address ---
+echo [.] Detecting Local IP Address...
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| find /i "IPv4"') do (
+    set "LOCAL_IP=%%a"
+    goto :ipfound
+)
+:ipfound
+setlocal enabledelayedexpansion
+set "LOCAL_IP=!LOCAL_IP:~1!"
+echo [+] Local IP Address: %LOCAL_IP%
+
 :: --- Start VLC Capture ---
 echo [.] Starting VLC Capture (Indestructible Mode)...
 :: Standardize flags: :screen-top/left=0 to target primary display and fix black screen issues.
-start /b "" "!VLC!" screen:// :screen-fps=30 :screen-caching=0 :live-caching=0 :screen-top=0 :screen-left=0 :screen-width=%SCREEN_W% :screen-height=%SCREEN_H% :sout=#transcode{vcodec=mjpg,vb=1200,width=320,height=200,fps=30}:standard{access=http,mux=mpjpeg,dst=:90/pc.mjpg} :sout-keep
+start /b "" "!VLC!" screen:// :screen-fps=30 :screen-caching=0 :live-caching=0 :screen-top=0 :screen-left=0 :screen-width=%SCREEN_W% :screen-height=%SCREEN_H% :sout=#transcode{vcodec=mjpg,vb=1200,width=320,height=200,fps=30}:standard{access=http,mux=mpjpeg,dst=0.0.0.0:90/pc.mjpg} :sout-keep
 
 :: --- Validation ---
 timeout /t 2 /nobreak > nul
@@ -58,5 +69,12 @@ echo.
 echo [+] ESPStreamer is now running!
 echo [!] Keep this window open to maintain the stream and proxy.
 echo [!] If screen is still black, check if VLC needs Administrator permissions.
+echo.
+echo ===== ESP32 SETUP =====
+echo To use with ESP32:
+echo 1. In the ESP32 web interface, click "Run via ESP32"
+echo 2. Enter the Host: %LOCAL_IP% (without the brackets)
+echo 3. Keep Port: 90
+echo 4. Click Connect
 echo.
 pause

@@ -30,19 +30,19 @@ void handleStaticFile() {
   if (path.endsWith("/")) path += "index.html";
 
   if (!LittleFS.exists(path)) {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
+    addCORSHeaders();
     server.send(404, "text/plain", "File not found");
     return;
   }
 
   File file = LittleFS.open(path, "r");
   if (!file) {
-    server.sendHeader("Access-Control-Allow-Origin", "*");
+    addCORSHeaders();
     server.send(500, "text/plain", "Failed to open file");
     return;
   }
 
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   server.sendHeader("Cache-Control", "max-age=600");
   server.streamFile(file, getContentType(path));
   file.close();
@@ -709,7 +709,7 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
 // --- Web Server Handlers ---
 
 void handleData() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   size_t len = (IS_IFLI) ? IFLI_FRAME_SIZE : (IS_FLI ? FLI_FRAME_SIZE : 10000);
   server.setContentLength(len);
   server.send(200, "application/octet-stream", "");
@@ -717,7 +717,7 @@ void handleData() {
 }
 
 void handleSetMode() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("m")) {
     String m = server.arg("m");
     if (m == "mc_gray") currentMode = M_MC_GRAY;
@@ -735,7 +735,7 @@ void handleSetMode() {
 }
 
 void handleSetBrightness() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("b")) {
     imgBrightness = server.arg("b").toFloat();
     brightness_val = (int16_t)imgBrightness;
@@ -746,7 +746,7 @@ void handleSetBrightness() {
 }
 
 void handleSetSaturation() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("s")) {
     imgSaturation = server.arg("s").toFloat();
     if (imgSaturation < 0.0f) imgSaturation = 0.0f;
@@ -759,7 +759,7 @@ void handleSetSaturation() {
 }
 
 void handleSetBg() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("c")) {
     int bg = server.arg("c").toInt();
     if (bg >= 0 && bg <= 15) {
@@ -774,7 +774,7 @@ void handleSetBg() {
 }
 
 void handleSetContrast() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("c")) {
     imgContrast = server.arg("c").toFloat();
     contrast_fp = (int16_t)(imgContrast * 256.0f);
@@ -785,7 +785,7 @@ void handleSetContrast() {
 }
 
 void handleSetDither() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("d")) {
     int d = server.arg("d").toInt();
     if (d >= 0 && d <= 8) {
@@ -800,7 +800,7 @@ void handleSetDither() {
 }
 
 void handleSetDitherType() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("t")) {
     int t = server.arg("t").toInt();
     if (t >= 0 && t <= 5) {
@@ -815,7 +815,7 @@ void handleSetDitherType() {
 }
 
 void handleSetScale() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("s")) {
     int s = server.arg("s").toInt();
     if (s == 1 || s == 2 || s == 4 || s == 8) {
@@ -832,7 +832,7 @@ void handleSetScale() {
 }
 
 void handleSetScaling() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("s")) {
     int s = server.arg("s").toInt();
     if (s >= 0 && s <= 2) {
@@ -847,7 +847,7 @@ void handleSetScaling() {
 }
 
 void handleSetPalette() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   if (server.hasArg("p")) {
     int p = server.arg("p").toInt();
     if (p >= 0 && p <= 3) {
@@ -895,8 +895,19 @@ void handleStats() {
                 ",\"scaling\":"     + String(scalingMode) +
                 ",\"paletteIdx\":"  + String(currentPaletteIdx) +
                 ",\"totalKB\":"     + String((uint32_t)(totalBytes / 1024)) + "}";
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCORSHeaders();
   server.send(200, "application/json", json);
+}
+
+void addCORSHeaders() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+void handleOptions() {
+  addCORSHeaders();
+  server.send(204);
 }
 
 /*
@@ -1103,6 +1114,11 @@ void old_handleRoot_to_delete() {
 </div>
 
 <script>
+// Stub function for backend mode (ESP32 embedded HTML runs directly on device)
+function setBackendMode(m) {
+  // No-op: ESP32 is always in native mode
+}
+
 const c64Pal = [
   [0,0,0], [255,255,255], [136,0,0], [170,255,238],
   [204,68,204], [0,204,85], [0,0,170], [238,238,119],
@@ -1928,17 +1944,29 @@ void setup() {
   }
   server.on("/", handleStaticFile);
   server.on("/data", handleData);
+  server.on("/data", HTTP_OPTIONS, handleOptions);
   server.on("/stats", handleStats);
+  server.on("/stats", HTTP_OPTIONS, handleOptions);
   server.on("/setmode", handleSetMode);
+  server.on("/setmode", HTTP_OPTIONS, handleOptions);
   server.on("/setbg", handleSetBg);
+  server.on("/setbg", HTTP_OPTIONS, handleOptions);
   server.on("/setbrightness", handleSetBrightness);
+  server.on("/setbrightness", HTTP_OPTIONS, handleOptions);
   server.on("/setcontrast", handleSetContrast);
+  server.on("/setcontrast", HTTP_OPTIONS, handleOptions);
   server.on("/setsaturation", handleSetSaturation);
+  server.on("/setsaturation", HTTP_OPTIONS, handleOptions);
   server.on("/setdither", handleSetDither);
+  server.on("/setdither", HTTP_OPTIONS, handleOptions);
   server.on("/setdithertype", handleSetDitherType);
+  server.on("/setdithertype", HTTP_OPTIONS, handleOptions);
   server.on("/setscale", handleSetScale);
+  server.on("/setscale", HTTP_OPTIONS, handleOptions);
   server.on("/setscaling", handleSetScaling);
+  server.on("/setscaling", HTTP_OPTIONS, handleOptions);
   server.on("/setpalette", handleSetPalette);
+  server.on("/setpalette", HTTP_OPTIONS, handleOptions);
   server.onNotFound(handleStaticFile);
   server.begin();
   Serial.println("Web server started");

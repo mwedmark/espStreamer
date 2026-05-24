@@ -969,6 +969,10 @@ async function upd() {
     }  } catch (e) { }
   if (running) setTimeout(upd, 70);
 }
+// Wire up backend buttons (safe if elements not present)
+document.getElementById('btn-backend-esp')?.addEventListener('click', () => setBackendMode('esp'));
+document.getElementById('btn-backend-pc')?.addEventListener('click', () => setBackendMode('pc'));
+
 setBackendMode('pc'); updateModeUI(); updateButtonStates(); upd();
 
 // Add fullscreen double-click handler for canvas wrapper
