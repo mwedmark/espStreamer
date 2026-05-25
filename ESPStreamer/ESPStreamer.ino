@@ -6,7 +6,7 @@
 #include <ESPmDNS.h>
 #include <WiFiManager.h>
 
-const char* streamHost = "c64streamer.local";
+const char* streamHost = "192.168.50.145";
 const int   streamPort = 90;
 const char* streamPath = "/pc.mjpg";
 
@@ -878,7 +878,7 @@ void handleStats() {
   else if (currentMode == M_MC_FLI)   mStr = "mc_fli";
   else if (currentMode == M_MC_GRAY_FLI) mStr = "mc_gray_fli";
   else if (currentMode == M_MC_GRAY_IFLI) mStr = "mc_gray_ifli";
-  
+
   String json = "{\"frames\":" + String(frameCount) +
                 ",\"mode\":\"" + mStr + "\"" +
                 ",\"lastSize\":" + String(lastFrameSize) +
@@ -895,12 +895,18 @@ void handleStats() {
                 ",\"scaling\":"     + String(scalingMode) +
                 ",\"paletteIdx\":"  + String(currentPaletteIdx) +
                 ",\"totalKB\":"     + String((uint32_t)(totalBytes / 1024)) + "}";
-  addCORSHeaders();
-  server.send(200, "application/json", json);
+
+  server.setContentLength(json.length());
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.sendHeader("Content-Type", "application/json");
+  server.send(200);
+  server.sendContent(json);
 }
 
 void addCORSHeaders() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Origin", "*", true);
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
@@ -1943,6 +1949,7 @@ void setup() {
     Serial.println("LittleFS mounted");
   }
   server.on("/", handleStaticFile);
+  server.on("/", HTTP_OPTIONS, handleOptions);
   server.on("/data", handleData);
   server.on("/data", HTTP_OPTIONS, handleOptions);
   server.on("/stats", handleStats);
@@ -1973,14 +1980,14 @@ void setup() {
 }
 
 void loop() {
-  server.handleClient();
+  server.handleClient();  // Always handle web requests first
 
   // Connect to stream if not connected
   if (!streamConnected) {
     if (connectToStream()) {
       streamConnected = true;
     } else {
-      delay(2000);  // Wait before retry
+      delay(100);  // Small delay, then continue to web server
       return;
     }
   }
@@ -2001,26 +2008,15 @@ void loop() {
       lastFrameSize = frameSize;
       totalBytes += frameSize;
 
-      // Debug: print first 8 bytes of JPEG
-      //Serial.printf("[MJPG] Frame %d: %d bytes, header: ", frameCount + 1, frameSize);
-      //for (int i = 0; i < min((size_t)8, frameSize); i++) {
-      //  Serial.printf("%02X ", temp_jpg_buffer[i]);
-      //}
-      //Serial.println();
-
-      // Verify it looks like a JPEG (starts with FF D8)
       if (frameSize > 2 && temp_jpg_buffer[0] == 0xFF && temp_jpg_buffer[1] == 0xD8) {
-        // Decode the JPEG into c64_buffer via the callback
         uint16_t w = 0, h = 0;
         TJpgDec.getJpgSize(&w, &h, temp_jpg_buffer, frameSize);
         currentJpgWidth = w / jpgScale;
         currentJpgHeight = h / jpgScale;
-        //Serial.printf("[MJPG] JPEG dimensions: %dx%d (scaled: %dx%d)\n", w, h, currentJpgWidth, currentJpgHeight);
 
-        // Precalculate mapping tables (aspect-ratio-aware)
         int targetW = IS_HIRES ? 320 : 160;
         int targetH = 200;
-        int pixelAspect = IS_HIRES ? 1 : 2; // MC logical pixels are 2x wide visually
+        int pixelAspect = IS_HIRES ? 1 : 2;
 
         int scaledLogicalW = targetW, scaledLogicalH = targetH;
         int offsetX = 0, offsetY = 0;
@@ -2028,7 +2024,6 @@ void loop() {
         int srcCropW = currentJpgWidth, srcCropH = currentJpgHeight;
 
         if (scalingMode == 1) {
-          // FIT: letterbox/pillarbox, whole image visible with black borders
           float srcAspect = (float)currentJpgWidth / currentJpgHeight;
           float dstAspect = (float)(targetW * pixelAspect) / targetH;
           if (srcAspect > dstAspect) {
@@ -2043,20 +2038,16 @@ void loop() {
             offsetX = (targetW - scaledLogicalW) / 2;
           }
         } else if (scalingMode == 2) {
-          // CROP: center-crop source to fill screen at correct aspect
           float srcAspect = (float)currentJpgWidth / currentJpgHeight;
           float dstAspect = (float)(targetW * pixelAspect) / targetH;
           if (srcAspect > dstAspect) {
-            // Source wider: crop left/right
             srcCropW = (int)((float)currentJpgHeight * (targetW * pixelAspect) / targetH);
             srcCropX = (currentJpgWidth - srcCropW) / 2;
           } else {
-            // Source taller: crop top/bottom
             srcCropH = (int)((float)currentJpgWidth * targetH / (targetW * pixelAspect));
             srcCropY = (currentJpgHeight - srcCropH) / 2;
           }
         }
-        // scalingMode == 0 (STRETCH): defaults fill the entire target
 
         for (int i = 0; i < currentJpgWidth && i < 1280; i++) {
           if (scalingMode == 2) {
@@ -2077,12 +2068,10 @@ void loop() {
           }
         }
 
-        // Setup render buffer and clear it BEFORE decoding starts (so bitwise OR works)
         render_buffer = c64_buffer + (1 - active_buffer) * 34005;
         memset(render_buffer, 0, 34005);
-        if (scalingMode > 0) memset(color_buffer, globalBgColor, sizeof(color_buffer)); // fill borders with current background color
-        
-        // Reset Floyd-Steinberg error buffers for the new frame
+        if (scalingMode > 0) memset(color_buffer, globalBgColor, sizeof(color_buffer));
+
         if (ditherAlgo == 5) memset(fs_err_buf, 0, sizeof(fs_err_buf));
 
         JRESULT res = TJpgDec.drawJpg(0, 0, temp_jpg_buffer, frameSize);
@@ -2094,20 +2083,19 @@ void loop() {
           } else {
             uint8_t* screen_ram = render_buffer + 8000;
             uint8_t* color_ram  = render_buffer + 9000;
-            uint8_t staticScreen = IS_HIRES ? 0x10 : 0xBC; // 1:White fg, 0:Black bg (HR) OR B:DarkGrey, C:MedGrey (MC)
+            uint8_t staticScreen = IS_HIRES ? 0x10 : 0xBC;
             memset(screen_ram, staticScreen, 1000);
-            memset(color_ram, 1, 1000); // 1:White
+            memset(color_ram, 1, 1000);
           }
           frameCount++;
-          
+
           uint32_t nz = 0;
           uint32_t checkSize = IS_IFLI ? 34000 : (IS_FLI ? 17000 : 10000);
           for (int i = 0; i < checkSize; i++) {
             if (render_buffer[i] != 0) nz++;
           }
           nonZeroPixels = nz;
-          
-          // Flip the buffer so the web server serves the new frame!
+
           active_buffer = 1 - active_buffer;
         } else {
           Serial.printf("[MJPG] Decode FAILED: error %d\n", res);
