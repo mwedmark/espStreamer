@@ -12,7 +12,7 @@ let frameResolve = null; // For async frame sync
 // Size tracking for export limits
 const MAX_PRG_SIZE = 65536; // ~64KB max for C64 PRG
 const MAX_CRT_SIZE = 1048576; // 1MB max for EasyFlash CRT
-const MAX_EF_FRAMES = 63; // Max images in 1MB EasyFlash CRT (10KB/image across ROML+ROMH)
+const MAX_EF_FRAMES = 103; // Max images in 1MB EasyFlash CRT (10KB/image packed across 63 data banks)
 let totalCaptureSize = 0;
 const palettes = [[[0, 0, 0], [255, 255, 255], [104, 55, 43], [112, 164, 178], [111, 61, 134], [88, 141, 67], [53, 40, 121], [184, 199, 111], [111, 79, 37], [67, 57, 0], [154, 103, 89], [68, 68, 68], [108, 108, 108], [154, 210, 132], [108, 94, 181], [149, 149, 149]], [[0, 0, 0], [255, 255, 255], [129, 51, 56], [117, 205, 200], [142, 60, 151], [86, 172, 93], [45, 48, 173], [237, 240, 175], [142, 80, 41], [85, 56, 0], [196, 108, 113], [74, 74, 74], [123, 123, 123], [169, 255, 159], [112, 117, 213], [170, 170, 170]]];
 let currentPaletteIdx = 0, c64Pal = palettes[0];
