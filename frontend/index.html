@@ -258,7 +258,9 @@
         VIEW ({<span id="screenshot-count">0</span>})</button>
       <span id="size-info" style="font-size:12px; margin-left:4px;"></span>
       <button onclick="save('PRG')">&#x25B6; PRG</button><button onclick="save('KOA')">&#x25B6; KOA</button><button
-        onclick="save('CRT')">&#x25B6; CRT</button><button onclick="save('ANIMATION')">&#x25B6; ANIMATION CRT</button>
+        onclick="save('CRT')">&#x25B6; CRT</button><button onclick="save('ANIMATION')">&#x25B6; ANIMATION CRT</button><button
+        id="btn-realtime-anim" onclick="recordRealtimeAnimation()"
+        style="background: linear-gradient(180deg, rgba(168,127,255,0.2), rgba(108,60,180,0.3)); border-color: rgba(168,127,255,0.4); color:#e8ccff;">&#x1F3AC; REALTIME ANIMATION CRT</button>
     </div>
     <div class="slider-container">
       <span>CT: <span id="cval" class="val">1.0</span></span>

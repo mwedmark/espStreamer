@@ -12,6 +12,7 @@ let frameResolve = null; // For async frame sync
 // Size tracking for export limits
 const MAX_PRG_SIZE = 65536; // ~64KB max for C64 PRG
 const MAX_CRT_SIZE = 1048576; // 1MB max for EasyFlash CRT
+const MAX_EF_FRAMES = 103; // Max images in 1MB EasyFlash CRT (10KB/image packed across 63 data banks)
 let totalCaptureSize = 0;
 const palettes = [[[0, 0, 0], [255, 255, 255], [104, 55, 43], [112, 164, 178], [111, 61, 134], [88, 141, 67], [53, 40, 121], [184, 199, 111], [111, 79, 37], [67, 57, 0], [154, 103, 89], [68, 68, 68], [108, 108, 108], [154, 210, 132], [108, 94, 181], [149, 149, 149]], [[0, 0, 0], [255, 255, 255], [129, 51, 56], [117, 205, 200], [142, 60, 151], [86, 172, 93], [45, 48, 173], [237, 240, 175], [142, 80, 41], [85, 56, 0], [196, 108, 113], [74, 74, 74], [123, 123, 123], [169, 255, 159], [112, 117, 213], [170, 170, 170]]];
 let currentPaletteIdx = 0, c64Pal = palettes[0];
@@ -359,13 +360,13 @@ function updateButtonStates() {
   const totalKB = (totalCaptureSize / 1024).toFixed(1);
   const multiPRGSize = n > 1 ? prgSlideshowSize(Math.min(n, MAX_PRG_FRAMES)) : 14145;
   const prgOK = multiPRGSize <= MAX_PRG_SIZE;
-  const crtOK = n * fsize <= MAX_CRT_SIZE;
+  const crtOK = n <= MAX_EF_FRAMES;
 
   // Update size display
   let sizeEl = document.getElementById('size-info');
   if (sizeEl) {
     if (n === 0) sizeEl.innerHTML = '';
-    else sizeEl.innerHTML = `<span style="color:#a0b4ff">${perFrame} KB/frame &nbsp;|&nbsp; <span style="color:${prgOK?'#a0ff90':'#ff6060'}">${(multiPRGSize/1024).toFixed(1)} KB PRG</span> &nbsp;|&nbsp; ${n} frame${n>1?'s':''}</span>`;
+    else sizeEl.innerHTML = `<span style="color:#a0b4ff">${perFrame} KB/frame &nbsp;|&nbsp; <span style="color:${prgOK?'#a0ff90':'#ff6060'}">${(multiPRGSize/1024).toFixed(1)} KB PRG</span> &nbsp;|&nbsp; <span style="color:${crtOK?'#a0ff90':'#ff6060'}">${n}/${MAX_EF_FRAMES} CRT</span> &nbsp;|&nbsp; ${n} frame${n>1?'s':''}</span>`;
   }
 
   document.querySelectorAll('button[onclick*="save(\'PRG\'"]').forEach(btn => {
@@ -377,7 +378,7 @@ function updateButtonStates() {
   document.querySelectorAll('button[onclick*="save(\'CRT\'"]').forEach(btn => {
     btn.disabled = !crtOK;
     btn.style.opacity = crtOK ? '1' : '0.5';
-    btn.title = crtOK ? `CRT slideshow (${n} frames)` : `Too many frames for 1MB CRT`;
+    btn.title = crtOK ? `EasyFlash CRT slideshow (${n}/${MAX_EF_FRAMES} frames)` : `Too many frames for 1MB EasyFlash CRT (max ${MAX_EF_FRAMES})`;
   });
   document.querySelectorAll('button[onclick*="save(\'KOA\'"]').forEach(btn => {
     btn.title = 'KOA: single frame export';
@@ -496,6 +497,7 @@ async function save(t) {
   // Multi-frame: route to slideshow generators
   if (screenshots.length > 1 && t === 'PRG') { await createSlideshow('PRG'); return; }
   if (screenshots.length > 1 && t === 'CRT') { await createSlideshow('CRT'); return; }
+  if (screenshots.length > 1 && t === 'ANIMATION') { await createSlideshow('ANIMATION'); return; }
   
   // Single image or CRT export - use original logic
   const r = await apiFetch('/data?t=' + Date.now());
@@ -721,18 +723,113 @@ async function createSlideshow(type) {
       const prg = buildSlideshowPRG(frames, bg);
       download(prg, 'slideshow.prg');
     } else if (type === 'CRT') {
-      // For CRT: embed the slideshow PRG inside an EasyFlash cartridge
-      // This allows running from a cart without disk and supports the same frames
-      const usedFrames = frames.slice(0, MAX_PRG_FRAMES);
-      if (frames.length > MAX_PRG_FRAMES)
-        alert(`CRT slideshow: using first ${MAX_PRG_FRAMES} frames.`);
-      const prg = buildSlideshowPRG(usedFrames, bg);
-      const crtData = wrapPRGinCRT(prg);
+      // For CRT: build a native 1MB EasyFlash cartridge with bank-switching viewer
+      // Supports up to 103 multicolor images (10KB each) across ROML+ROMH banks
+      const usedFrames = frames.slice(0, MAX_EF_FRAMES);
+      if (frames.length > MAX_EF_FRAMES)
+        alert(`CRT slideshow: using first ${MAX_EF_FRAMES} of ${frames.length} frames.`);
+      const crtData = buildEasyFlashSlideshow(usedFrames, bg);
       download(crtData, 'slideshow.crt');
+    } else if (type === 'ANIMATION') {
+      // 10 FPS unrolled video player
+      const usedFrames = frames.slice(0, 63); // Hard limit 63 for animation
+      if (frames.length > 63)
+        alert(`Animation CRT: using first 63 of ${frames.length} frames.`);
+      const crtData = buildEasyFlashAnimation(usedFrames, bg);
+      download(crtData, 'animation.crt');
     }
   } catch(e) {
     alert('Slideshow generation failed: ' + e.message);
     void 0;
+  }
+}
+
+async function recordRealtimeAnimation() {
+  // Show slick glassmorphic recording progress modal
+  const modal = document.createElement('div');
+  modal.id = 'recording-modal';
+  modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(10, 10, 30, 0.85); display: flex; justify-content: center; align-items: center; z-index: 1000; font-family: \'Share Tech Mono\', monospace; backdrop-filter: blur(8px);';
+  
+  modal.innerHTML = `
+    <div style="background: rgba(20, 20, 50, 0.95); border: 1px solid rgba(100, 140, 255, 0.4); border-radius: 16px; padding: 30px; text-align: center; width: 360px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(100, 140, 255, 0.2); position: relative;">
+      <h3 style="color: #a87fff; margin-bottom: 20px; font-size: 20px; letter-spacing: 2px; text-shadow: 0 0 10px rgba(168, 127, 255, 0.4);">&#x1F3AC; RECORDING REALTIME CRT</h3>
+      <div id="recording-progress-container" style="width: 100%; height: 8px; background: rgba(255, 255, 255, 0.05); border-radius: 4px; border: 1px solid rgba(100, 140, 255, 0.2); overflow: hidden; margin-bottom: 20px;">
+        <div id="recording-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #6c8cff, #a87fff); border-radius: 4px; transition: width 0.1s ease-in-out; box-shadow: 0 0 8px #a87fff;"></div>
+      </div>
+      <div style="font-size: 16px; color: #a0b4ff; margin-bottom: 25px; letter-spacing: 1px;">
+        Capturing: <span id="recording-frame-idx" style="color: #a0ff90; font-weight: bold; text-shadow: 0 0 8px rgba(160, 255, 144, 0.4);">0</span> / 63 frames
+      </div>
+      <div id="recording-status-text" style="font-size: 13px; color: #7088cc; letter-spacing: 0.5px;">Initializing stream capture...</div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const progressBar = document.getElementById('recording-progress-bar');
+  const frameIdxEl = document.getElementById('recording-frame-idx');
+  const statusEl = document.getElementById('recording-status-text');
+
+  const recordedFrames = [];
+  const totalFrames = 63;
+  const captureIntervalMs = 100; // 10 FPS capture matching C64 player
+
+  try {
+    for (let i = 0; i < totalFrames; i++) {
+      statusEl.textContent = `Capturing frame ${i + 1}...`;
+      
+      const r = await apiFetch('/data?t=' + Date.now());
+      if (!r.ok) {
+        throw new Error('Failed to fetch frame data from backend.');
+      }
+      
+      const bmpData = new Uint8Array(await r.arrayBuffer());
+      recordedFrames.push(bmpData);
+      
+      // Update modal progress
+      const percent = ((i + 1) / totalFrames) * 100;
+      progressBar.style.width = `${percent}%`;
+      frameIdxEl.textContent = i + 1;
+      
+      // Delay before next capture to hit exact 10 FPS
+      if (i < totalFrames - 1) {
+        await new Promise(resolve => setTimeout(resolve, captureIntervalMs));
+      }
+    }
+    
+    statusEl.textContent = 'Compiling EasyFlash Animation...';
+    statusEl.style.color = '#ffd080';
+    
+    // Compile using shared buildEasyFlashAnimation
+    const bg = currentBgColor || 0;
+    const crtData = buildEasyFlashAnimation(recordedFrames, bg);
+    
+    statusEl.textContent = 'Downloading CRT file...';
+    statusEl.style.color = '#80ffcc';
+    
+    download(crtData, 'realtime_animation.crt');
+    
+    // Auto close modal
+    setTimeout(() => {
+      modal.remove();
+    }, 1000);
+    
+  } catch (error) {
+    statusEl.textContent = 'Error: ' + error.message;
+    statusEl.style.color = '#ff6b6b';
+    
+    // Add close button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'CLOSE';
+    closeBtn.style.cssText = 'margin-top: 20px; padding: 8px 24px; background: linear-gradient(180deg, rgba(255,100,100,0.2), rgba(180,60,60,0.3)); border: 1px solid rgba(255,100,100,0.4); border-radius: 8px; color: #ffcccc; cursor: pointer; font-family: inherit; font-size: 13px; letter-spacing: 1px; transition: all 0.2s;';
+    closeBtn.onmouseover = () => {
+      closeBtn.style.background = 'linear-gradient(180deg, rgba(255,100,100,0.4), rgba(180,60,60,0.5))';
+      closeBtn.style.color = '#fff';
+    };
+    closeBtn.onmouseout = () => {
+      closeBtn.style.background = 'linear-gradient(180deg, rgba(255,100,100,0.2), rgba(180,60,60,0.3))';
+      closeBtn.style.color = '#ffcccc';
+    };
+    closeBtn.onclick = () => modal.remove();
+    modal.querySelector('div').appendChild(closeBtn);
   }
 }
 
@@ -766,6 +863,538 @@ function wrapPRGinCRT(prg) {
   const out = new Uint8Array(total); let off=0;
   for (const c of crt) { out.set(c,off); off+=c.length; }
   return out;
+}
+
+// ==========================================================
+// 1MB EasyFlash CRT Slideshow (up to 63 images)
+// ==========================================================
+// Architecture:
+//   Bank 0 ROMH ($E000 in Ultimax): Boot code copies viewer to RAM
+//   Bank 0 ROML ($8000): Viewer code (BASIC stub + 6502 machine code)
+//   Banks 1-N ROML+ROMH: Image data packed contiguously
+//     Each image = 8000 bytes bitmap + 1000 screen + 1000 color = 10000 bytes
+//     Each bank provides 16384 bytes (ROML $8000-$9FFF + ROMH $A000-$BFFF)
+//   Viewer runs from RAM at $0801, bank-switches to read images at runtime
+//   Uses 16K cart mode ($DE02=$87) so both ROML and ROMH are visible
+// ==========================================================
+
+function buildEasyFlashSlideshow(frames, bgColor) {
+  const n = Math.min(frames.length, MAX_EF_FRAMES);
+  if (n === 0) throw new Error('No frames to build slideshow');
+
+  // --- 1. Build viewer machine code ---
+  const viewerCode = _buildSlideViewer(n, bgColor & 0xFF);
+
+  // --- 2. Build ROML bank 0: BASIC stub + viewer ---
+  const roml0 = new Uint8Array(8192).fill(0xFF);
+  // BASIC stub at offset 0 → loads at $0801: "10 SYS 2061"
+  roml0.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 0);
+  // Viewer machine code at offset 12 → runs at $080D
+  roml0.set(viewerCode, 12);
+
+  // --- 3. Build ROMH bank 0: boot code ---
+  const viewerTotalBytes = 12 + viewerCode.length;
+  const viewerPages = Math.ceil(viewerTotalBytes / 256);
+  const romh0 = _buildSlideBootCode(viewerPages);
+
+  // --- 4. Pack image data across ROML+ROMH of banks 1..N ---
+  const streamSize = n * 10000;
+  const imageStream = new Uint8Array(streamSize);
+  for (let i = 0; i < n; i++) {
+    const f = frames[i];
+    const base = i * 10000;
+    // Bitmap 8000 bytes
+    imageStream.set(f.subarray(0, Math.min(8000, f.length)), base);
+    // Screen RAM 1000 bytes (at offset 8000 in engine buffer)
+    if (f.length > 8000)
+      imageStream.set(f.subarray(8000, Math.min(9000, f.length)), base + 8000);
+    // Color RAM 1000 bytes (at offset 9000 in engine buffer)
+    if (f.length > 9000)
+      imageStream.set(f.subarray(9000, Math.min(10000, f.length)), base + 9000);
+  }
+
+  const dataBanks = Math.ceil(streamSize / 16384);
+
+  // --- 5. Assemble CRT file ---
+  // Helper: make 8KB CHIP packet
+  const mkChip = (bank, addr, data) => {
+    const p = new Uint8Array(16 + 8192).fill(0);
+    p.set([0x43,0x48,0x49,0x50, 0,0,0x20,0x10, 0,0x02,
+           (bank>>8)&0xFF, bank&0xFF, (addr>>8)&0xFF, addr&0xFF, 0x20,0x00], 0);
+    p.set(data.subarray(0, 8192), 16);
+    return p;
+  };
+
+  // CRT header
+  const hdr = new Uint8Array(64);
+  hdr.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0);
+  hdr[0x13] = 0x40;                    // header length = 64
+  hdr[0x14] = 0x01; hdr[0x15] = 0x00;  // version 1.0
+  hdr[0x17] = 0x20;                    // hardware type 32 = EasyFlash
+  hdr[0x18] = 0x01; hdr[0x19] = 0x00;  // EXROM=1, GAME=0 → Ultimax boot
+  hdr.set(new TextEncoder().encode('EF SLIDESHOW').subarray(0, 32), 0x20);
+
+  const chips = [];
+  // Bank 0: boot (ROMH) + viewer (ROML)
+  chips.push(mkChip(0, 0x8000, roml0));
+  chips.push(mkChip(0, 0xA000, romh0));
+
+  // Data banks 1..N: ROML + ROMH per bank
+  for (let b = 0; b < dataBanks; b++) {
+    const bankStreamOff = b * 16384;
+    // ROML portion (first 8192 bytes of this bank's data)
+    const rl = new Uint8Array(8192).fill(0xFF);
+    const rlLen = Math.min(8192, streamSize - bankStreamOff);
+    if (rlLen > 0) rl.set(imageStream.subarray(bankStreamOff, bankStreamOff + rlLen));
+    chips.push(mkChip(b + 1, 0x8000, rl));
+
+    // ROMH portion (next 8192 bytes)
+    const rh = new Uint8Array(8192).fill(0xFF);
+    const rhOff = bankStreamOff + 8192;
+    const rhLen = Math.min(8192, streamSize - rhOff);
+    if (rhLen > 0) rh.set(imageStream.subarray(rhOff, rhOff + rhLen));
+    chips.push(mkChip(b + 1, 0xA000, rh));
+  }
+
+  // Concatenate
+  const totalSize = 64 + chips.reduce((a, c) => a + c.length, 0);
+  const crt = new Uint8Array(totalSize);
+  crt.set(hdr, 0);
+  let off = 64;
+  for (const c of chips) { crt.set(c, off); off += c.length; }
+
+  console.log(`EasyFlash CRT: ${n} frames, ${dataBanks} data banks, ${totalSize} bytes`);
+  return crt;
+}
+
+// Build the 6502 viewer code for the EasyFlash slideshow (runs at $080D from RAM)
+function _buildSlideViewer(numFrames, bgColor) {
+  const c = [];    // code bytes
+  const B = 0x080D; // base address
+
+  // Helpers
+  const here = () => c.length;
+  const abs  = () => B + c.length;
+  const rel  = (brOff, tgtOff) => {
+    const d = tgtOff - (brOff + 2);
+    if (d < -128 || d > 127) throw new Error('Branch out of range: ' + d);
+    return d & 0xFF;
+  };
+
+  // ===== INIT =====
+  c.push(0x78);                                     // SEI
+  c.push(0xD8);                                     // CLD
+  c.push(0xA9, 0x35, 0x85, 0x01);                   // LDA #$35, STA $01
+
+  // Disable CIA interrupts (prevent NMI)
+  c.push(0xA9, 0x7F, 0x8D, 0x0D, 0xDC);             // LDA #$7F, STA $DC0D
+  c.push(0x8D, 0x0D, 0xDD);                          // STA $DD0D
+  c.push(0xAD, 0x0D, 0xDC);                          // LDA $DC0D (ack)
+  c.push(0xAD, 0x0D, 0xDD);                          // LDA $DD0D (ack)
+
+  // VIC-II multicolor bitmap mode, blanked initially ($2B) to hide uninitialized RAM
+  c.push(0xA9, 0x2B, 0x8D, 0x11, 0xD0);             // LDA #$2B, STA $D011
+  c.push(0xA9, 0xD8, 0x8D, 0x16, 0xD0);             // LDA #$D8, STA $D016
+  c.push(0xA9, 0x18, 0x8D, 0x18, 0xD0);             // LDA #$18, STA $D018
+  c.push(0xA9, bgColor, 0x8D, 0x20, 0xD0);           // border color
+  c.push(0xA9, bgColor, 0x8D, 0x21, 0xD0);           // background color
+
+  // Set CIA2 to bank 1 ($4000-$7FFF) initially
+  c.push(0xAD, 0x02, 0xDD, 0x09, 0x03, 0x8D, 0x02, 0xDD); // LDA $DD02, ORA #3, STA $DD02
+  c.push(0xAD, 0x00, 0xDD, 0x29, 0xFC, 0x09, 0x02, 0x8D, 0x00, 0xDD); // LDA $DD00, AND #$FC, ORA #2, STA $DD00
+
+  // Enable 16K cartridge mode (ROML $8000 + ROMH $A000)
+  c.push(0xA9, 0x87, 0x8D, 0x02, 0xDE);             // LDA #$87, STA $DE02
+
+  // Init variables
+  c.push(0xA9, 0x01, 0x85, 0x02);                   // bank = 1 → ZP $02
+  c.push(0xA9, 0x00, 0x85, 0xFE);                   // src lo → ZP $FE
+  c.push(0xA9, 0x80, 0x85, 0xFF);                   // src hi → ZP $FF
+  c.push(0xA9, 0x00, 0x85, 0xFB);                   // frame_idx = 0 → ZP $FB
+  c.push(0xA9, 0x00, 0x85, 0x03);                   // draw_bank = 0 → ZP $03 (0=Bank 0, 1=Bank 1)
+
+  // ===== SHOW_FRAME =====
+  const sf = here(); const sfA = abs();
+  c.push(0xA5, 0x02, 0x8D, 0x00, 0xDE);             // LDA bank, STA $DE00
+
+  // Determine destinations based on draw_bank
+  c.push(0xA5, 0x03);                               // LDA $03
+  const bBank1 = here(); c.push(0xD0, 0x00);         // BNE bank1_dest
+
+  // Bank 0 destinations:
+  c.push(0xA9, 0x20, 0x85, 0x04);                   // Bitmap high = $20
+  c.push(0xA9, 0x04, 0x85, 0x05);                   // Screen high = $04
+  const bDestDone = here(); c.push(0x4C, 0x00, 0x00);
+
+  // Bank 1 destinations:
+  const bank1Off = here(); c[bBank1 + 1] = rel(bBank1, bank1Off);
+  c.push(0xA9, 0x60, 0x85, 0x04);                   // Bitmap high = $60
+  c.push(0xA9, 0x44, 0x85, 0x05);                   // Screen high = $44
+
+  const destDoneA = abs(); 
+  c[bDestDone + 1] = destDoneA & 0xFF; 
+  c[bDestDone + 2] = (destDoneA >> 8) & 0xFF;
+
+  // Copy bitmap: 8000 ($1F40) bytes
+  c.push(0xA9, 0x00, 0x85, 0xFC);
+  c.push(0xA5, 0x04, 0x85, 0xFD);
+  c.push(0xA9, 0x40, 0x85, 0x06);
+  c.push(0xA9, 0x1F, 0x85, 0x07);
+  const j1 = here(); c.push(0x20, 0x00, 0x00);      // JSR copy_banked
+
+  // Copy screen: 1000 ($03E8) bytes
+  c.push(0xA9, 0x00, 0x85, 0xFC);
+  c.push(0xA5, 0x05, 0x85, 0xFD);
+  c.push(0xA9, 0xE8, 0x85, 0x06);
+  c.push(0xA9, 0x03, 0x85, 0x07);
+  const j2 = here(); c.push(0x20, 0x00, 0x00);
+
+  // Wait for raster to be off-screen (line 256+) before copying Color RAM
+  c.push(0xAD, 0x11, 0xD0);                         // LDA $D011
+  c.push(0x10, 0xFB);                               // BPL *-3 (wait until bit 7 is set)
+
+  // Copy color: 1000 bytes → $D800
+  c.push(0xA9, 0x00, 0x85, 0xFC);
+  c.push(0xA9, 0xD8, 0x85, 0xFD);
+  c.push(0xA9, 0xE8, 0x85, 0x06);
+  c.push(0xA9, 0x03, 0x85, 0x07);
+  const j3 = here(); c.push(0x20, 0x00, 0x00);
+
+  // Ensure screen is unblanked (required for the first frame)
+  c.push(0xA9, 0x3B, 0x8D, 0x11, 0xD0);             // LDA #$3B, STA $D011
+
+  // Toggle display bank in VIC-II
+  c.push(0xAD, 0x00, 0xDD, 0x49, 0x01, 0x8D, 0x00, 0xDD); // EOR #$01 to flip between Bank 0 and Bank 1
+
+  // Toggle draw bank
+  c.push(0xA5, 0x03, 0x49, 0x01, 0x85, 0x03);
+
+  // ===== WAIT ~3 seconds (150 raster-$FE passes ≈ 3s at 50Hz) =====
+  c.push(0xA9, 150, 0x85, 0xFC);                    // LDA #150, STA $FC
+  const wf = here();
+  c.push(0xAD, 0x12, 0xD0, 0xC9, 0xFE);             // LDA $D012, CMP #$FE
+  const bWf = here(); c.push(0xD0, 0x00);            // BNE wait_find
+  const wp = here();
+  c.push(0xAD, 0x12, 0xD0, 0xC9, 0xFE);             // LDA $D012, CMP #$FE
+  const bWp = here(); c.push(0xF0, 0x00);            // BEQ wait_pass
+  c.push(0xC6, 0xFC);                               // DEC counter
+  const bWf2 = here(); c.push(0xD0, 0x00);           // BNE wait_find
+  c[bWf + 1] = rel(bWf, wf);  c[bWp + 1] = rel(bWp, wp);  c[bWf2 + 1] = rel(bWf2, wf);
+
+  // ===== ADVANCE FRAME =====
+  c.push(0xE6, 0xFB, 0xA5, 0xFB);                   // INC $FB, LDA $FB
+  c.push(0xC9, numFrames & 0xFF);                    // CMP #numFrames
+  const bRst = here(); c.push(0xF0, 0x00);           // BEQ reset
+  c.push(0x4C, sfA & 0xFF, (sfA >> 8) & 0xFF);      // JMP show_frame
+
+  // Reset to first frame
+  const rstOff = here();
+  c[bRst + 1] = rel(bRst, rstOff);
+  c.push(0xA9,0x00,0x85,0xFB);                       // frame_idx = 0
+  c.push(0xA9,0x01,0x85,0x02);                       // bank = 1
+  c.push(0xA9,0x00,0x85,0xFE);                       // src lo = 0
+  c.push(0xA9,0x80,0x85,0xFF);                       // src hi = $80
+  c.push(0x4C, sfA & 0xFF, (sfA >> 8) & 0xFF);      // JMP show_frame
+
+  // ===== COPY_BANKED SUBROUTINE =====
+  // Copies $06:$07 bytes from banked ROM (bank=$02, addr=$FE/$FF) to $FC/$FD
+  // Handles bank boundaries at $C000 (ROML $8000 + ROMH $A000 = 16KB per bank)
+  // After return, $02/$FE/$FF point to next byte (ready for next copy)
+  const cbOff = here(); const cbA = abs();
+  c[j1+1]=cbA&0xFF; c[j1+2]=(cbA>>8)&0xFF;
+  c[j2+1]=cbA&0xFF; c[j2+2]=(cbA>>8)&0xFF;
+  c[j3+1]=cbA&0xFF; c[j3+2]=(cbA>>8)&0xFF;
+
+  c.push(0xA0, 0x00);                               // LDY #0
+  const bChk = here(); c.push(0xF0, 0x00);           // BEQ check (always taken)
+
+  // loop:
+  const lp = here();
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  c.push(0x91, 0xFC);                               // STA ($FC),Y
+  // Advance source
+  c.push(0xE6, 0xFE);                               // INC $FE
+  const bNs = here(); c.push(0xD0, 0x00);            // BNE no_src_carry
+  c.push(0xE6, 0xFF);                               // INC $FF
+  c.push(0xA5, 0xFF);                               // LDA $FF
+  c.push(0xC9, 0xC0);                               // CMP #$C0
+  const bNb = here(); c.push(0xD0, 0x00);            // BNE no_bank_cross
+  // Bank boundary: reset to $8000, next bank
+  c.push(0xA9, 0x80, 0x85, 0xFF);                   // LDA #$80, STA $FF
+  c.push(0xE6, 0x02);                               // INC bank
+  c.push(0xA5, 0x02, 0x8D, 0x00, 0xDE);             // LDA bank, STA $DE00
+  // no_src_carry / no_bank_cross target:
+  const nsOff = here();
+  c[bNs + 1] = rel(bNs, nsOff);  c[bNb + 1] = rel(bNb, nsOff);
+  // Advance destination
+  c.push(0xE6, 0xFC);                               // INC $FC
+  const bNd = here(); c.push(0xD0, 0x00);            // BNE no_dst_carry
+  c.push(0xE6, 0xFD);                               // INC $FD
+  const ndOff = here(); c[bNd + 1] = rel(bNd, ndOff);
+  // Decrement 16-bit count
+  c.push(0xA5, 0x06);                               // LDA $06
+  const bNbr = here(); c.push(0xD0, 0x00);           // BNE no_borrow
+  c.push(0xC6, 0x07);                               // DEC $07
+  const nbrOff = here(); c[bNbr + 1] = rel(bNbr, nbrOff);
+  c.push(0xC6, 0x06);                               // DEC $06
+  // check:
+  const chkOff = here(); c[bChk + 1] = rel(bChk, chkOff);
+  c.push(0xA5, 0x06, 0x05, 0x07);                   // LDA $06, ORA $07
+  const bLp = here(); c.push(0xD0, 0x00);            // BNE loop
+  c.push(0x60);                                     // RTS
+  c[bLp + 1] = rel(bLp, lp);
+
+  console.log(`Viewer code: ${c.length} bytes ($080D-$${(B + c.length - 1).toString(16).toUpperCase()})`);
+  return new Uint8Array(c);
+}
+
+// Build boot code for ROMH bank 0 (runs at $E000 in Ultimax mode)
+function _buildSlideBootCode(viewerPages) {
+  const romh = new Uint8Array(8192).fill(0xFF);
+
+  // Phase 2: copies viewer from ROML bank 0 to $0801, enables 16K mode, jumps to viewer
+  const p2 = [
+    0xA9, 0x00, 0x8D, 0x00, 0xDE,           // LDA #0, STA $DE00 (select bank 0)
+    0xA9, 0x00, 0x85, 0xFE,                  // src lo = $00
+    0xA9, 0x80, 0x85, 0xFF,                  // src hi = $80 → ROML $8000
+    0xA9, 0x01, 0x85, 0xFB,                  // dst lo = $01
+    0xA9, 0x08, 0x85, 0xFC,                  // dst hi = $08 → RAM $0801
+    0xA9, viewerPages & 0xFF,                // LDA #viewerPages
+    0x8D, 0x00, 0x03,                        // STA $0300 (page counter)
+    // page_loop:
+    0xA0, 0x00,                              // LDY #0
+    0xB1, 0xFE,                              // LDA ($FE),Y
+    0x91, 0xFB,                              // STA ($FB),Y
+    0xC8,                                    // INY
+    0xD0, 0xF9,                              // BNE byte_loop (-7 → LDA ($FE),Y)
+    0xE6, 0xFF,                              // INC src hi
+    0xE6, 0xFC,                              // INC dst hi
+    0xCE, 0x00, 0x03,                        // DEC $0300
+    0xD0, 0xEE,                              // BNE page_loop (-18 → LDY #0)
+    // Enable 16K cart mode and jump to viewer
+    0xA9, 0x87,                              // LDA #$87 (16K mode + LED)
+    0x8D, 0x02, 0xDE,                        // STA $DE02
+    0x8D, 0xFF, 0xDF,                        // STA $DFFF (real hardware)
+    0x4C, 0x0D, 0x08                         // JMP $080D
+  ];
+
+  // Phase 1: copies Phase 2 to $0200, jumps there
+  const p2len = p2.length;
+  const p1 = [
+    0x78,                                    // SEI
+    0xD8,                                    // CLD
+    0xA2, 0xFF, 0x9A,                        // LDX #$FF, TXS
+    0xA9, 0x37, 0x85, 0x01,                  // LDA #$37, STA $01
+    0xA2, (p2len - 1) & 0xFF,                // LDX #(p2len-1)
+    // copy_loop:
+    0xBD, 0x17, 0xE0,                        // LDA $E017,X (Phase 2 at ROMH offset $17)
+    0x9D, 0x00, 0x02,                        // STA $0200,X
+    0xCA,                                    // DEX
+    0x10, 0xF7,                              // BPL copy_loop
+    0x4C, 0x00, 0x02                         // JMP $0200
+  ];
+
+  if (p1.length !== 23) throw new Error('Phase 1 size mismatch: ' + p1.length);
+
+  romh.set(p1, 0);           // Phase 1 at offset 0 ($E000)
+  romh.set(p2, 23);          // Phase 2 at offset 23 ($E017)
+
+  // Ultimax reset vectors (read from ROMH at $FFFA-$FFFF)
+  romh[0x1FFA] = 0x00; romh[0x1FFB] = 0xE0; // NMI  → $E000
+  romh[0x1FFC] = 0x00; romh[0x1FFD] = 0xE0; // RESET→ $E000
+  romh[0x1FFE] = 0x01; romh[0x1FFF] = 0xE0; // IRQ  → $E001
+
+  return romh;
+}
+
+// ==========================================================
+// 10 FPS EasyFlash Animation Viewer (Max 63 frames)
+// ==========================================================
+
+function buildEasyFlashAnimation(frames, bgColor) {
+  const n = Math.min(frames.length, 63);
+  if (n === 0) throw new Error('No frames to build animation');
+
+  const viewerCode = _buildSlideViewerAnim(n, bgColor & 0xFF);
+
+  const roml0 = new Uint8Array(8192).fill(0xFF);
+  roml0.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 0);
+  roml0.set(viewerCode, 12);
+
+  const viewerTotalBytes = 12 + viewerCode.length;
+  const viewerPages = Math.ceil(viewerTotalBytes / 256);
+  const romh0 = _buildSlideBootCode(viewerPages);
+
+  const streamSize = n * 16384;
+  const imageStream = new Uint8Array(streamSize).fill(0xFF);
+  for (let i = 0; i < n; i++) {
+    const f = frames[i];
+    const base = i * 16384;
+    // Bitmap
+    imageStream.set(f.subarray(0, Math.min(8000, f.length)), base);
+    // Screen RAM
+    if (f.length > 8000)
+      imageStream.set(f.subarray(8000, Math.min(9000, f.length)), base + 8192);
+    // Color RAM
+    if (f.length > 9000)
+      imageStream.set(f.subarray(9000, Math.min(10000, f.length)), base + 9216);
+  }
+
+  const mkChip = (bank, addr, data) => {
+    const p = new Uint8Array(16 + 8192).fill(0);
+    p.set([0x43,0x48,0x49,0x50, 0,0,0x20,0x10, 0,0x02,
+           (bank>>8)&0xFF, bank&0xFF, (addr>>8)&0xFF, addr&0xFF, 0x20,0x00], 0);
+    p.set(data.subarray(0, 8192), 16);
+    return p;
+  };
+
+  const hdr = new Uint8Array(64);
+  hdr.set([0x43,0x36,0x34,0x20,0x43,0x41,0x52,0x54,0x52,0x49,0x44,0x47,0x45,0x20,0x20,0x20], 0);
+  hdr[0x13] = 0x40;
+  hdr[0x14] = 0x01; hdr[0x15] = 0x00;
+  hdr[0x17] = 0x20;
+  hdr[0x18] = 0x01; hdr[0x19] = 0x00;
+  hdr.set(new TextEncoder().encode('EF ANIMATION').subarray(0, 32), 0x20);
+
+  const chips = [];
+  chips.push(mkChip(0, 0x8000, roml0));
+  chips.push(mkChip(0, 0xA000, romh0));
+
+  for (let b = 0; b < n; b++) {
+    const bankStreamOff = b * 16384;
+    const rl = new Uint8Array(8192).fill(0xFF);
+    rl.set(imageStream.subarray(bankStreamOff, bankStreamOff + 8192));
+    chips.push(mkChip(b + 1, 0x8000, rl));
+
+    const rh = new Uint8Array(8192).fill(0xFF);
+    rh.set(imageStream.subarray(bankStreamOff + 8192, bankStreamOff + 16384));
+    chips.push(mkChip(b + 1, 0xA000, rh));
+  }
+
+  const totalSize = 64 + chips.reduce((a, c) => a + c.length, 0);
+  const crt = new Uint8Array(totalSize);
+  crt.set(hdr, 0);
+  let off = 64;
+  for (const c of chips) { crt.set(c, off); off += c.length; }
+
+  return crt;
+}
+
+function _buildSlideViewerAnim(numFrames, bgColor) {
+  const c = [];    
+  const B = 0x080D; 
+  const here = () => c.length;
+  const abs  = () => B + c.length;
+  const rel  = (brOff, tgtOff) => {
+    const d = tgtOff - (brOff + 2);
+    if (d < -128 || d > 127) throw new Error('Branch out of range: ' + d);
+    return d & 0xFF;
+  };
+
+  c.push(0x78, 0xD8);                               // SEI, CLD
+  c.push(0xA9, 0x35, 0x85, 0x01);                   // LDA #$35, STA $01
+
+  c.push(0xA9, 0x7F, 0x8D, 0x0D, 0xDC);             // Disable NMI
+  c.push(0x8D, 0x0D, 0xDD);                         
+  c.push(0xAD, 0x0D, 0xDC, 0xAD, 0x0D, 0xDD);       
+
+  c.push(0xA9, 0x2B, 0x8D, 0x11, 0xD0);             // Blanked bitmap mode initially
+  c.push(0xA9, 0xD8, 0x8D, 0x16, 0xD0);             // Multicolor
+  c.push(0xA9, 0x18, 0x8D, 0x18, 0xD0);             
+  c.push(0xA9, bgColor, 0x8D, 0x20, 0xD0);          
+  c.push(0xA9, bgColor, 0x8D, 0x21, 0xD0);          
+
+  c.push(0xAD, 0x02, 0xDD, 0x09, 0x03, 0x8D, 0x02, 0xDD); // Bank 1
+  c.push(0xAD, 0x00, 0xDD, 0x29, 0xFC, 0x09, 0x02, 0x8D, 0x00, 0xDD); 
+
+  c.push(0xA9, 0x87, 0x8D, 0x02, 0xDE);             // 16K cart mode
+
+  c.push(0xA9, 0x01, 0x85, 0x02);                   // bank = 1
+  c.push(0xA9, 0x00, 0x85, 0xFB);                   // frame_idx = 0
+  c.push(0xA9, 0x00, 0x85, 0x03);                   // draw_bank = 0
+
+  const sf = here(); const sfA = abs();
+  c.push(0xA5, 0x02, 0x8D, 0x00, 0xDE);             // LDA bank, STA $DE00
+
+  c.push(0xA5, 0x03);                               // LDA $03
+  c.push(0xF0, 0x03);                               // BEQ +3 (jump over JMP if draw_bank == 0)
+  const bBank1_Jmp = here(); c.push(0x4C, 0x00, 0x00); // JMP bank1_dest
+
+  // Bank 0 Copy Routine
+  c.push(0xA2, 0x00);                               // LDX #0
+  const cb0_loop = here();
+  for (let i = 0; i < 32; i++) {
+    c.push(0xBD, 0x00, 0x80 + i);                   // LDA $8000+i*256,X
+    c.push(0x9D, 0x00, 0x20 + i);                   // STA $2000+i*256,X
+  }
+  for (let i = 0; i < 4; i++) {
+    c.push(0xBD, 0x00, 0xA0 + i);                   // LDA $A000+i*256,X
+    c.push(0x9D, 0x00, 0x04 + i);                   // STA $0400+i*256,X
+  }
+  c.push(0xE8);                                     // INX
+  c.push(0xF0, 0x03);                               // BEQ +3 (skip JMP if X wrapped to 0)
+  const loop0A = B + cb0_loop;
+  c.push(0x4C, loop0A & 0xFF, (loop0A >> 8) & 0xFF); // JMP cb0_loop
+  
+  const bDestDone = here(); c.push(0x4C, 0x00, 0x00); // JMP color_copy
+
+  // Bank 1 Copy Routine
+  const bank1A = abs(); 
+  c[bBank1_Jmp + 1] = bank1A & 0xFF;
+  c[bBank1_Jmp + 2] = (bank1A >> 8) & 0xFF;
+  c.push(0xA2, 0x00);                               // LDX #0
+  const cb1_loop = here();
+  for (let i = 0; i < 32; i++) {
+    c.push(0xBD, 0x00, 0x80 + i);                   
+    c.push(0x9D, 0x00, 0x60 + i);                   
+  }
+  for (let i = 0; i < 4; i++) {
+    c.push(0xBD, 0x00, 0xA0 + i);                   
+    c.push(0x9D, 0x00, 0x44 + i);                   
+  }
+  c.push(0xE8);                                     // INX
+  c.push(0xF0, 0x03);                               // BEQ +3 (skip JMP)
+  const loop1A = B + cb1_loop;
+  c.push(0x4C, loop1A & 0xFF, (loop1A >> 8) & 0xFF); // JMP cb1_loop
+
+  const destDoneA = abs(); 
+  c[bDestDone + 1] = destDoneA & 0xFF; 
+  c[bDestDone + 2] = (destDoneA >> 8) & 0xFF;
+
+  // Color RAM Copy
+  c.push(0xAD, 0x11, 0xD0);                         // LDA $D011
+  c.push(0x10, 0xFB);                               // BPL *-3 (wait until bit 7 is set)
+
+  c.push(0xA2, 0x00);                               // LDX #0
+  const col_loop = here();
+  for (let i = 0; i < 4; i++) {
+    c.push(0xBD, 0x00, 0xA4 + i);                   // LDA $A400+i*256,X
+    c.push(0x9D, 0x00, 0xD8 + i);                   // STA $D800+i*256,X
+  }
+  c.push(0xE8);                                     // INX
+  const bCol = here(); c.push(0xD0, 0x00);           // BNE col_loop
+  c[bCol + 1] = rel(bCol, col_loop);
+
+  c.push(0xA9, 0x3B, 0x8D, 0x11, 0xD0);             // Unblank screen
+  c.push(0xAD, 0x00, 0xDD, 0x49, 0x01, 0x8D, 0x00, 0xDD); // Toggle VIC bank
+
+  c.push(0xA5, 0x03, 0x49, 0x01, 0x85, 0x03);       // Toggle draw bank
+
+  // Advance Frame (No wait loop!)
+  c.push(0xE6, 0xFB);                               // INC frame_idx
+  c.push(0xE6, 0x02);                               // INC bank
+  c.push(0xA5, 0xFB);                               // LDA frame_idx
+  c.push(0xC9, numFrames & 0xFF);                    // CMP #numFrames
+  const bRst = here(); c.push(0xF0, 0x00);           // BEQ reset
+  c.push(0x4C, sfA & 0xFF, (sfA >> 8) & 0xFF);      // JMP show_frame
+
+  const rstOff = here();
+  c[bRst + 1] = rel(bRst, rstOff);
+  c.push(0xA9, 0x00, 0x85, 0xFB);                   // frame_idx = 0
+  c.push(0xA9, 0x01, 0x85, 0x02);                   // bank = 1
+  c.push(0x4C, sfA & 0xFF, (sfA >> 8) & 0xFF);      // JMP show_frame
+
+  return new Uint8Array(c);
 }
 
 async function convertScreenshotToC64Bitmap(screenshot, frameIndex) {
@@ -969,6 +1598,10 @@ async function upd() {
     }  } catch (e) { }
   if (running) setTimeout(upd, 70);
 }
+// Wire up backend buttons (safe if elements not present)
+document.getElementById('btn-backend-esp')?.addEventListener('click', () => setBackendMode('esp'));
+document.getElementById('btn-backend-pc')?.addEventListener('click', () => setBackendMode('pc'));
+
 setBackendMode('pc'); updateModeUI(); updateButtonStates(); upd();
 
 // Add fullscreen double-click handler for canvas wrapper

@@ -744,6 +744,95 @@ async function createSlideshow(type) {
   }
 }
 
+async function recordRealtimeAnimation() {
+  // Show slick glassmorphic recording progress modal
+  const modal = document.createElement('div');
+  modal.id = 'recording-modal';
+  modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(10, 10, 30, 0.85); display: flex; justify-content: center; align-items: center; z-index: 1000; font-family: \'Share Tech Mono\', monospace; backdrop-filter: blur(8px);';
+  
+  modal.innerHTML = `
+    <div style="background: rgba(20, 20, 50, 0.95); border: 1px solid rgba(100, 140, 255, 0.4); border-radius: 16px; padding: 30px; text-align: center; width: 360px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(100, 140, 255, 0.2); position: relative;">
+      <h3 style="color: #a87fff; margin-bottom: 20px; font-size: 20px; letter-spacing: 2px; text-shadow: 0 0 10px rgba(168, 127, 255, 0.4);">&#x1F3AC; RECORDING REALTIME CRT</h3>
+      <div id="recording-progress-container" style="width: 100%; height: 8px; background: rgba(255, 255, 255, 0.05); border-radius: 4px; border: 1px solid rgba(100, 140, 255, 0.2); overflow: hidden; margin-bottom: 20px;">
+        <div id="recording-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #6c8cff, #a87fff); border-radius: 4px; transition: width 0.1s ease-in-out; box-shadow: 0 0 8px #a87fff;"></div>
+      </div>
+      <div style="font-size: 16px; color: #a0b4ff; margin-bottom: 25px; letter-spacing: 1px;">
+        Capturing: <span id="recording-frame-idx" style="color: #a0ff90; font-weight: bold; text-shadow: 0 0 8px rgba(160, 255, 144, 0.4);">0</span> / 63 frames
+      </div>
+      <div id="recording-status-text" style="font-size: 13px; color: #7088cc; letter-spacing: 0.5px;">Initializing stream capture...</div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const progressBar = document.getElementById('recording-progress-bar');
+  const frameIdxEl = document.getElementById('recording-frame-idx');
+  const statusEl = document.getElementById('recording-status-text');
+
+  const recordedFrames = [];
+  const totalFrames = 63;
+  const captureIntervalMs = 100; // 10 FPS capture matching C64 player
+
+  try {
+    for (let i = 0; i < totalFrames; i++) {
+      statusEl.textContent = `Capturing frame ${i + 1}...`;
+      
+      const r = await apiFetch('/data?t=' + Date.now());
+      if (!r.ok) {
+        throw new Error('Failed to fetch frame data from backend.');
+      }
+      
+      const bmpData = new Uint8Array(await r.arrayBuffer());
+      recordedFrames.push(bmpData);
+      
+      // Update modal progress
+      const percent = ((i + 1) / totalFrames) * 100;
+      progressBar.style.width = `${percent}%`;
+      frameIdxEl.textContent = i + 1;
+      
+      // Delay before next capture to hit exact 10 FPS
+      if (i < totalFrames - 1) {
+        await new Promise(resolve => setTimeout(resolve, captureIntervalMs));
+      }
+    }
+    
+    statusEl.textContent = 'Compiling EasyFlash Animation...';
+    statusEl.style.color = '#ffd080';
+    
+    // Compile using shared buildEasyFlashAnimation
+    const bg = currentBgColor || 0;
+    const crtData = buildEasyFlashAnimation(recordedFrames, bg);
+    
+    statusEl.textContent = 'Downloading CRT file...';
+    statusEl.style.color = '#80ffcc';
+    
+    download(crtData, 'realtime_animation.crt');
+    
+    // Auto close modal
+    setTimeout(() => {
+      modal.remove();
+    }, 1000);
+    
+  } catch (error) {
+    statusEl.textContent = 'Error: ' + error.message;
+    statusEl.style.color = '#ff6b6b';
+    
+    // Add close button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'CLOSE';
+    closeBtn.style.cssText = 'margin-top: 20px; padding: 8px 24px; background: linear-gradient(180deg, rgba(255,100,100,0.2), rgba(180,60,60,0.3)); border: 1px solid rgba(255,100,100,0.4); border-radius: 8px; color: #ffcccc; cursor: pointer; font-family: inherit; font-size: 13px; letter-spacing: 1px; transition: all 0.2s;';
+    closeBtn.onmouseover = () => {
+      closeBtn.style.background = 'linear-gradient(180deg, rgba(255,100,100,0.4), rgba(180,60,60,0.5))';
+      closeBtn.style.color = '#fff';
+    };
+    closeBtn.onmouseout = () => {
+      closeBtn.style.background = 'linear-gradient(180deg, rgba(255,100,100,0.2), rgba(180,60,60,0.3))';
+      closeBtn.style.color = '#ffcccc';
+    };
+    closeBtn.onclick = () => modal.remove();
+    modal.querySelector('div').appendChild(closeBtn);
+  }
+}
+
 // Wraps a PRG in an EasyFlash CRT using the existing loader boot code
 function wrapPRGinCRT(prg) {
   const pbL = prg.subarray(2); // strip 2-byte load address
