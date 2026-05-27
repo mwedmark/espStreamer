@@ -272,6 +272,12 @@
       <span>SAT: <span id="sval" class="val">1.0</span></span>
       <input type="range" id="saturation" min="0.0" max="2.0" step="0.1" value="1.0" oninput="updateSaturationText()"
         onchange="sendSaturation()">
+      <span>LIMIT X: <span id="lxval" class="val">100%</span></span>
+      <input type="range" id="limitX" min="10" max="100" step="5" value="100" oninput="updateLimitXText()"
+        onchange="sendLimitX()">
+      <span>LIMIT Y: <span id="lyval" class="val">100%</span></span>
+      <input type="range" id="limitY" min="10" max="100" step="5" value="100" oninput="updateLimitYText()"
+        onchange="sendLimitY()">
       <select id="pal-sel" onchange="sendPalette()" style="color:#ffcc80">
         <option value="0">PEPTO (PAL)</option>
         <option value="1">COLODORE</option>

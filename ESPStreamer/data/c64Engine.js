@@ -1,7 +1,7 @@
 // Pure JavaScript port of ESPStreamer C++ engine - VERSION 9.0 (Sync with C++ Reference)
 window.C64Engine = (function () {
     let currentMode = 'mc_gray', isRunning = false, connected = false;
-    let cf = 256, bv = 0, sf = 256, ds = 4, da = 2, bgC = 0, sc = 0, palIdx = 0, fCount = 0, tKB = 0;
+    let cf = 256, bv = 0, sf = 256, ds = 4, da = 2, bgC = 0, sc = 0, palIdx = 0, fCount = 0, tKB = 0, limitX = 100, limitY = 100;
     
     // Pre-allocated arrays to match ESP32 buffer sizes and avoid GC
     const preAllocated = {
@@ -265,34 +265,34 @@ window.C64Engine = (function () {
                                         offCtx.fillStyle = `rgb(${pal.r[bgC]},${pal.g[bgC]},${pal.b[bgC]})`;
                                         offCtx.fillRect(0, 0, wT, 200);
 
-                                        // Calculate scaling coordinates
+                                        // Calculate scaling coordinates based on custom active limits
                                         let sx = 0, sy = 0, sw = imgS.width, sh = imgS.height;
-                                        let dx = 0, dy = 0, dw = wT, dh = 200;
+                                        let targetW = wT * (limitX / 100);
+                                        let targetH = 200 * (limitY / 100);
+                                        let dw = targetW, dh = targetH;
+                                        let dx = (wT - targetW) / 2;
+                                        let dy = (200 - targetH) / 2;
 
                                         const pixelAspect = currentMode.includes('hr') ? 1 : 2;
-                                        const targetAspect = 1.6; // Visual target aspect (320:200)
+                                        const targetAspect = (targetW * pixelAspect) / targetH;
                                         const imgAspect = imgS.width / imgS.height;
 
                                         if (sc === 1) { // FIT
                                             if (imgAspect > targetAspect) {
-                                                // Image is wider: letterbox (fit width)
-                                                dw = wT;
-                                                dh = (wT * pixelAspect) / imgAspect;
+                                                dw = targetW;
+                                                dh = (targetW * pixelAspect) / imgAspect;
                                                 dy = (200 - dh) / 2;
                                             } else {
-                                                // Image is taller: pillarbox (fit height)
-                                                dh = 200;
-                                                dw = (200 * imgAspect) / pixelAspect;
+                                                dh = targetH;
+                                                dw = (targetH * imgAspect) / pixelAspect;
                                                 dx = (wT - dw) / 2;
                                             }
                                         } else if (sc === 2) { // CROP
                                             if (imgAspect > targetAspect) {
-                                                // Image is wider than the visual target ratio: crop sides
-                                                sw = imgS.height * targetAspect;
+                                                sw = (imgS.height * targetAspect) / pixelAspect;
                                                 sx = (imgS.width - sw) / 2;
                                             } else {
-                                                // Image is taller than the visual target ratio: crop top/bottom
-                                                sh = imgS.width / targetAspect;
+                                                sh = (imgS.width * pixelAspect) / targetAspect;
                                                 sy = (imgS.height - sh) / 2;
                                             }
                                         }
@@ -328,8 +328,8 @@ window.C64Engine = (function () {
                 new Uint8Array(r).set(dataToReturn); 
                 return { ok: true, arrayBuffer: async () => r }; 
             }
-            if (p.startsWith('/stats')) return { ok: true, json: async () => ({ frames: fCount, mode: currentMode, connected: connected, contrast: cf / 256, brightness: bv, saturation: sf / 256, bg: bgC, dither: ds, ditherType: da, totalKB: tKB, paletteIdx: palIdx, scale: 1, scaling: sc }) };
-            if (p.startsWith('/setmode')) currentMode = u.searchParams.get('m'); if (p.startsWith('/setcontrast')) cf = Math.floor(parseFloat(u.searchParams.get('c')) * 256); if (p.startsWith('/setbrightness')) bv = parseInt(u.searchParams.get('b')); if (p.startsWith('/setsaturation')) sf = Math.floor(parseFloat(u.searchParams.get('s')) * 256); if (p.startsWith('/setbg')) bgC = parseInt(u.searchParams.get('c')); if (p.startsWith('/setpalette')) { palIdx = parseInt(u.searchParams.get('p')); pal = pals[palIdx]; } if (p.startsWith('/setdither')) ds = parseInt(u.searchParams.get('d')); if (p.startsWith('/setdithertype')) da = parseInt(u.searchParams.get('t')); if (p.startsWith('/setscaling')) sc = parseInt(u.searchParams.get('s')); return { ok: true };
+             if (p.startsWith('/stats')) return { ok: true, json: async () => ({ frames: fCount, mode: currentMode, connected: connected, contrast: cf / 256, brightness: bv, saturation: sf / 256, bg: bgC, dither: ds, ditherType: da, totalKB: tKB, paletteIdx: palIdx, scale: 1, scaling: sc, limitX: limitX, limitY: limitY }) };
+            if (p.startsWith('/setmode')) currentMode = u.searchParams.get('m'); if (p.startsWith('/setcontrast')) cf = Math.floor(parseFloat(u.searchParams.get('c')) * 256); if (p.startsWith('/setbrightness')) bv = parseInt(u.searchParams.get('b')); if (p.startsWith('/setsaturation')) sf = Math.floor(parseFloat(u.searchParams.get('s')) * 256); if (p.startsWith('/setbg')) bgC = parseInt(u.searchParams.get('c')); if (p.startsWith('/setpalette')) { palIdx = parseInt(u.searchParams.get('p')); pal = pals[palIdx]; } if (p.startsWith('/setdither')) ds = parseInt(u.searchParams.get('d')); if (p.startsWith('/setdithertype')) da = parseInt(u.searchParams.get('t')); if (p.startsWith('/setscaling')) sc = parseInt(u.searchParams.get('s')); if (p.startsWith('/setlimitx')) limitX = parseInt(u.searchParams.get('x')); if (p.startsWith('/setlimity')) limitY = parseInt(u.searchParams.get('y')); return { ok: true };
         }
     };
 })();

@@ -24,7 +24,7 @@ async function apiFetch(path) {
   return fetch(espBaseUrl + path);
 }
 function setBackendMode(m) { usePCBackend = (m === 'pc'); document.getElementById('btn-backend-pc').style.borderColor = usePCBackend ? '#40ff40' : '#6c8cff'; if (usePCBackend) window.C64Engine.start(); else window.C64Engine.stop(); syncAll(); }
-function syncAll() { sendContrast(); sendBrightness(); sendSaturation(); sendBg(); sendPalette(); sendDither(); sendDitherType(); sendScaling(); }
+function syncAll() { sendContrast(); sendBrightness(); sendSaturation(); sendBg(); sendPalette(); sendDither(); sendDitherType(); sendScaling(); sendLimitX(); sendLimitY(); }
 function resetKungFuStreamBuffers(mode) {
   if (kungFuWebSocket && kungFuWebSocket.readyState === WebSocket.OPEN) {
     kungFuWebSocket.send(JSON.stringify({ command: 'reset_buffers', mode }));
@@ -45,6 +45,10 @@ function sendDitherType() { sendSettingWithC64Reset('/setdithertype?t=' + docume
 function sendBg() { const e = document.getElementById('bgcolor'); if (e) sendSettingWithC64Reset('/setbg?c=' + e.value, 'background color'); }
 function sendScaling() { const e = document.getElementById('scaling'); if (e) { sendSettingWithC64Reset('/setscaling?s=' + e.value, 'scaling'); document.getElementById('c').setAttribute('data-scale', e.value); } }
 function sendPalette() { sendSettingWithC64Reset('/setpalette?p=' + document.getElementById('pal-sel').value, 'palette'); }
+function updateLimitXText() { document.getElementById('lxval').innerText = document.getElementById('limitX').value + '%'; }
+function sendLimitX() { sendSettingWithC64Reset('/setlimitx?x=' + document.getElementById('limitX').value, 'limit X'); }
+function updateLimitYText() { document.getElementById('lyval').innerText = document.getElementById('limitY').value + '%'; }
+function sendLimitY() { sendSettingWithC64Reset('/setlimity?y=' + document.getElementById('limitY').value, 'limit Y'); }
 function download(d, n) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d])); a.download = n; a.click(); }
 
 // Kung Fu Flash WebSocket functions
@@ -1587,6 +1591,8 @@ async function upd() {
       if (document.getElementById('ditherType') && document.activeElement !== document.getElementById('ditherType')) { document.getElementById('ditherType').value = s.ditherType; }
       if (document.getElementById('scaling') && document.activeElement !== document.getElementById('scaling')) { document.getElementById('scaling').value = s.scaling; document.getElementById('c').setAttribute('data-scale', s.scaling); }
       if (document.getElementById('bgcolor') && document.activeElement !== document.getElementById('bgcolor')) { document.getElementById('bgcolor').value = s.bg; }
+      if (s.limitX !== undefined && document.getElementById('limitX') && document.activeElement !== document.getElementById('limitX')) { document.getElementById('limitX').value = s.limitX; updateLimitXText(); }
+      if (s.limitY !== undefined && document.getElementById('limitY') && document.activeElement !== document.getElementById('limitY')) { document.getElementById('limitY').value = s.limitY; updateLimitYText(); }
     }
     if (r && r.ok) {
       const d = new Uint8Array(await r.arrayBuffer()); 

@@ -95,6 +95,8 @@ float imgSaturation = 1.0f;
 int16_t saturation_fp = 256;
 uint8_t jpgScale = 1;
 uint8_t scalingMode = 0;   // 0=Stretch, 1=Fit (letterbox), 2=Crop (zoom)
+volatile uint8_t limitX = 100;
+volatile uint8_t limitY = 100;
 uint8_t ditherStrength = 4;  // Dither intensity: 0=off, 1-8
 uint8_t ditherAlgo = 2;      // 0=None, 1=Bayer4x4, 2=Bayer8x8, 3=WhiteNoise, 4=BlueNoise, 5=FloydSteinberg
 uint8_t globalBgColor = 0;   // User-selected background color
@@ -846,6 +848,36 @@ void handleSetScaling() {
   }
 }
 
+void handleSetLimitX() {
+  addCORSHeaders();
+  if (server.hasArg("x")) {
+    int x = server.arg("x").toInt();
+    if (x >= 10 && x <= 100) {
+      limitX = (uint8_t)x;
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid value (10-100)");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?x= param");
+  }
+}
+
+void handleSetLimitY() {
+  addCORSHeaders();
+  if (server.hasArg("y")) {
+    int y = server.arg("y").toInt();
+    if (y >= 10 && y <= 100) {
+      limitY = (uint8_t)y;
+      server.send(200, "text/plain", "OK");
+    } else {
+      server.send(400, "text/plain", "Invalid value (10-100)");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing ?y= param");
+  }
+}
+
 void handleSetPalette() {
   addCORSHeaders();
   if (server.hasArg("p")) {
@@ -894,6 +926,8 @@ void handleStats() {
                 ",\"bg\":"          + String(globalBgColor) +
                 ",\"scaling\":"     + String(scalingMode) +
                 ",\"paletteIdx\":"  + String(currentPaletteIdx) +
+                ",\"limitX\":"      + String(limitX) +
+                ",\"limitY\":"      + String(limitY) +
                 ",\"totalKB\":"     + String((uint32_t)(totalBytes / 1024)) + "}";
 
   server.setContentLength(json.length());
@@ -1972,6 +2006,10 @@ void setup() {
   server.on("/setscale", HTTP_OPTIONS, handleOptions);
   server.on("/setscaling", handleSetScaling);
   server.on("/setscaling", HTTP_OPTIONS, handleOptions);
+  server.on("/setlimitx", handleSetLimitX);
+  server.on("/setlimitx", HTTP_OPTIONS, handleOptions);
+  server.on("/setlimity", handleSetLimitY);
+  server.on("/setlimity", HTTP_OPTIONS, handleOptions);
   server.on("/setpalette", handleSetPalette);
   server.on("/setpalette", HTTP_OPTIONS, handleOptions);
   server.onNotFound(handleStaticFile);
@@ -2023,36 +2061,52 @@ void loop() {
         int srcCropX = 0, srcCropY = 0;
         int srcCropW = currentJpgWidth, srcCropH = currentJpgHeight;
 
+        int activeW = (targetW * limitX) / 100;
+        int activeH = (targetH * limitY) / 100;
+        int offsetX_base = (targetW - activeW) / 2;
+        int offsetY_base = (targetH - activeH) / 2;
+
         if (scalingMode == 1) {
           float srcAspect = (float)currentJpgWidth / currentJpgHeight;
-          float dstAspect = (float)(targetW * pixelAspect) / targetH;
+          float dstAspect = (float)(activeW * pixelAspect) / activeH;
           if (srcAspect > dstAspect) {
-            scaledLogicalW = targetW;
-            float scale = (float)(targetW * pixelAspect) / currentJpgWidth;
+            scaledLogicalW = activeW;
+            float scale = (float)(activeW * pixelAspect) / currentJpgWidth;
             scaledLogicalH = (int)(currentJpgHeight * scale);
-            offsetY = (targetH - scaledLogicalH) / 2;
+            offsetY = offsetY_base + (activeH - scaledLogicalH) / 2;
+            offsetX = offsetX_base;
           } else {
-            scaledLogicalH = targetH;
-            float scale = (float)targetH / currentJpgHeight;
+            scaledLogicalH = activeH;
+            float scale = (float)activeH / currentJpgHeight;
             scaledLogicalW = (int)((float)currentJpgWidth * scale / pixelAspect);
-            offsetX = (targetW - scaledLogicalW) / 2;
+            offsetX = offsetX_base + (activeW - scaledLogicalW) / 2;
+            offsetY = offsetY_base;
           }
         } else if (scalingMode == 2) {
+          scaledLogicalW = activeW;
+          scaledLogicalH = activeH;
+          offsetX = offsetX_base;
+          offsetY = offsetY_base;
           float srcAspect = (float)currentJpgWidth / currentJpgHeight;
-          float dstAspect = (float)(targetW * pixelAspect) / targetH;
+          float dstAspect = (float)(activeW * pixelAspect) / activeH;
           if (srcAspect > dstAspect) {
-            srcCropW = (int)((float)currentJpgHeight * (targetW * pixelAspect) / targetH);
+            srcCropW = (int)((float)currentJpgHeight * (activeW * pixelAspect) / activeH);
             srcCropX = (currentJpgWidth - srcCropW) / 2;
           } else {
-            srcCropH = (int)((float)currentJpgWidth * targetH / (targetW * pixelAspect));
+            srcCropH = (int)((float)currentJpgWidth * activeH / (activeW * pixelAspect));
             srcCropY = (currentJpgHeight - srcCropH) / 2;
           }
+        } else {
+          scaledLogicalW = activeW;
+          scaledLogicalH = activeH;
+          offsetX = offsetX_base;
+          offsetY = offsetY_base;
         }
 
         for (int i = 0; i < currentJpgWidth && i < 1280; i++) {
           if (scalingMode == 2) {
             if (i < srcCropX || i >= srcCropX + srcCropW) { mapX_start[i] = mapX_end[i] = 0; }
-            else { int ci = i - srcCropX; mapX_start[i] = (ci * scaledLogicalW) / srcCropW; mapX_end[i] = ((ci+1) * scaledLogicalW) / srcCropW; }
+            else { int ci = i - srcCropX; mapX_start[i] = offsetX + (ci * scaledLogicalW) / srcCropW; mapX_end[i] = offsetX + ((ci+1) * scaledLogicalW) / srcCropW; }
           } else {
             mapX_start[i] = offsetX + (i * scaledLogicalW) / currentJpgWidth;
             mapX_end[i]   = offsetX + ((i + 1) * scaledLogicalW) / currentJpgWidth;
@@ -2061,7 +2115,7 @@ void loop() {
         for (int i = 0; i < currentJpgHeight && i < 1024; i++) {
           if (scalingMode == 2) {
             if (i < srcCropY || i >= srcCropY + srcCropH) { mapY_start[i] = mapY_end[i] = 0; }
-            else { int ci = i - srcCropY; mapY_start[i] = (ci * scaledLogicalH) / srcCropH; mapY_end[i] = ((ci+1) * scaledLogicalH) / srcCropH; }
+            else { int ci = i - srcCropY; mapY_start[i] = offsetY + (ci * scaledLogicalH) / srcCropH; mapY_end[i] = offsetY + ((ci+1) * scaledLogicalH) / srcCropH; }
           } else {
             mapY_start[i] = offsetY + (i * scaledLogicalH) / currentJpgHeight;
             mapY_end[i]   = offsetY + ((i + 1) * scaledLogicalH) / currentJpgHeight;
@@ -2070,7 +2124,7 @@ void loop() {
 
         render_buffer = c64_buffer + (1 - active_buffer) * 34005;
         memset(render_buffer, 0, 34005);
-        if (scalingMode > 0) memset(color_buffer, globalBgColor, sizeof(color_buffer));
+        memset(color_buffer, globalBgColor, sizeof(color_buffer));
 
         if (ditherAlgo == 5) memset(fs_err_buf, 0, sizeof(fs_err_buf));
 
