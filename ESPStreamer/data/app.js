@@ -735,10 +735,8 @@ async function createSlideshow(type) {
       const crtData = buildEasyFlashSlideshow(usedFrames, bg);
       download(crtData, 'slideshow.crt');
     } else if (type === 'ANIMATION') {
-      // 10 FPS unrolled video player
-      const usedFrames = frames.slice(0, 63); // Hard limit 63 for animation
-      if (frames.length > 63)
-        alert(`Animation CRT: using first 63 of ${frames.length} frames.`);
+      // 25 FPS unrolled delta video player
+      const usedFrames = frames; 
       const crtData = buildEasyFlashAnimation(usedFrames, bg);
       download(crtData, 'animation.crt');
     }
@@ -761,7 +759,7 @@ async function recordRealtimeAnimation() {
         <div id="recording-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #6c8cff, #a87fff); border-radius: 4px; transition: width 0.1s ease-in-out; box-shadow: 0 0 8px #a87fff;"></div>
       </div>
       <div style="font-size: 16px; color: #a0b4ff; margin-bottom: 25px; letter-spacing: 1px;">
-        Capturing: <span id="recording-frame-idx" style="color: #a0ff90; font-weight: bold; text-shadow: 0 0 8px rgba(160, 255, 144, 0.4);">0</span> / 63 frames
+        Capturing: <span id="recording-frame-idx" style="color: #a0ff90; font-weight: bold; text-shadow: 0 0 8px rgba(160, 255, 144, 0.4);">0</span> / 150 frames
       </div>
       <div id="recording-status-text" style="font-size: 13px; color: #7088cc; letter-spacing: 0.5px;">Initializing stream capture...</div>
     </div>
@@ -773,7 +771,7 @@ async function recordRealtimeAnimation() {
   const statusEl = document.getElementById('recording-status-text');
 
   const recordedFrames = [];
-  const totalFrames = 63;
+  const totalFrames = 150;
   const captureIntervalMs = 100; // 10 FPS capture matching C64 player
 
   try {
@@ -1216,11 +1214,129 @@ function _buildSlideBootCode(viewerPages) {
 // ==========================================================
 
 function buildEasyFlashAnimation(frames, bgColor) {
-  const n = Math.min(frames.length, 63);
+  const n = frames.length;
   if (n === 0) throw new Error('No frames to build animation');
 
+  // --- 1. Compute Page Deltas for each frame ---
+  const deltaRecords = [];
+  
+  const isPageDifferent = (buf1, buf2, offset, length = 256) => {
+    if (!buf2) return true; // First frame treats all pages as changed
+    for (let i = 0; i < length; i++) {
+      if (buf1[offset + i] !== buf2[offset + i]) return true;
+    }
+    return false;
+  };
+
+  const getPageData = (buf, offset, length = 256) => {
+    const data = new Uint8Array(256);
+    const available = Math.min(length, buf.length - offset);
+    if (available > 0) {
+      data.set(buf.subarray(offset, offset + available));
+    }
+    return data;
+  };
+
+  for (let i = 0; i < n; i++) {
+    const curr = frames[i];
+    const prev = i > 0 ? frames[i - 1] : null;
+
+    const changedBmp = [];
+    const changedScr = [];
+    const changedCol = [];
+
+    // Bitmap: 32 pages (0..31)
+    for (let p = 0; p < 32; p++) {
+      if (isPageDifferent(curr, prev, p * 256, 256)) {
+        changedBmp.push({ idx: p, data: getPageData(curr, p * 256, 256) });
+      }
+    }
+
+    // Screen RAM: 4 pages (0..3), total 1000 bytes
+    for (let p = 0; p < 4; p++) {
+      const len = p === 3 ? 232 : 256;
+      if (isPageDifferent(curr, prev, 8000 + p * 256, len)) {
+        changedScr.push({ idx: p, data: getPageData(curr, 8000 + p * 256, 256) });
+      }
+    }
+
+    // Color RAM: 4 pages (0..3), total 1000 bytes
+    for (let p = 0; p < 4; p++) {
+      const len = p === 3 ? 232 : 256;
+      if (isPageDifferent(curr, prev, 9000 + p * 256, len)) {
+        changedCol.push({ idx: p, data: getPageData(curr, 9000 + p * 256, 256) });
+      }
+    }
+
+    // Pack into a delta record
+    const recordSize = 4 + (changedBmp.length + changedScr.length + changedCol.length) * 257;
+    const rec = new Uint8Array(recordSize);
+    rec[0] = changedBmp.length;
+    rec[1] = changedScr.length;
+    rec[2] = changedCol.length;
+    rec[3] = bgColor & 0xFF;
+
+    let offset = 4;
+    for (const p of changedBmp) {
+      rec[offset] = p.idx;
+      rec.set(p.data, offset + 1);
+      offset += 257;
+    }
+    for (const p of changedScr) {
+      rec[offset] = p.idx;
+      rec.set(p.data, offset + 1);
+      offset += 257;
+    }
+    for (const p of changedCol) {
+      rec[offset] = p.idx;
+      rec.set(p.data, offset + 1);
+      offset += 257;
+    }
+
+    deltaRecords.push(rec);
+  }
+
+  // --- 2. Pack delta records contiguously into 16KB EasyFlash banks ---
+  const packedBanks = [];
+  let currentBank = new Uint8Array(16384).fill(0xFF);
+  let currentOffset = 0;
+
+  for (let i = 0; i < n; i++) {
+    const rec = deltaRecords[i];
+    if (rec.length > 16384) {
+      throw new Error(`Record size ${rec.length} exceeds max bank size 16384!`);
+    }
+
+    // If it doesn't fit, pad current bank and switch to next
+    if (currentOffset + rec.length > 16384) {
+      // Mark end of bank
+      currentBank[currentOffset] = 0xFF;
+      packedBanks.push(currentBank);
+      
+      currentBank = new Uint8Array(16384).fill(0xFF);
+      currentOffset = 0;
+    }
+
+    currentBank.set(rec, currentOffset);
+    currentOffset += rec.length;
+  }
+
+  // Mark final end
+  if (currentOffset < 16384) {
+    currentBank[currentOffset] = 0xFF;
+  }
+  packedBanks.push(currentBank);
+
+  // EasyFlash max bank safety check
+  if (packedBanks.length > 63) {
+    alert(`Delta Cartridge: exceeded 1MB Cartridge space. Truncating to fit first 63 banks.`);
+    packedBanks.splice(63);
+  }
+
+  // --- 3. Build viewer machine code ---
   const viewerCode = _buildSlideViewerAnim(n, bgColor & 0xFF);
 
+  // --- 4. Build ROML bank 0: BASIC stub + viewer ---
   const roml0 = new Uint8Array(8192).fill(0xFF);
   roml0.set([0x0B,0x08,0x0A,0x00,0x9E,0x32,0x30,0x36,0x31,0x00,0x00,0x00], 0);
   roml0.set(viewerCode, 12);
@@ -1229,21 +1345,7 @@ function buildEasyFlashAnimation(frames, bgColor) {
   const viewerPages = Math.ceil(viewerTotalBytes / 256);
   const romh0 = _buildSlideBootCode(viewerPages);
 
-  const streamSize = n * 16384;
-  const imageStream = new Uint8Array(streamSize).fill(0xFF);
-  for (let i = 0; i < n; i++) {
-    const f = frames[i];
-    const base = i * 16384;
-    // Bitmap
-    imageStream.set(f.subarray(0, Math.min(8000, f.length)), base);
-    // Screen RAM
-    if (f.length > 8000)
-      imageStream.set(f.subarray(8000, Math.min(9000, f.length)), base + 8192);
-    // Color RAM
-    if (f.length > 9000)
-      imageStream.set(f.subarray(9000, Math.min(10000, f.length)), base + 9216);
-  }
-
+  // --- 5. Assemble CRT file ---
   const mkChip = (bank, addr, data) => {
     const p = new Uint8Array(16 + 8192).fill(0);
     p.set([0x43,0x48,0x49,0x50, 0,0,0x20,0x10, 0,0x02,
@@ -1258,21 +1360,18 @@ function buildEasyFlashAnimation(frames, bgColor) {
   hdr[0x14] = 0x01; hdr[0x15] = 0x00;
   hdr[0x17] = 0x20;
   hdr[0x18] = 0x01; hdr[0x19] = 0x00;
-  hdr.set(new TextEncoder().encode('EF ANIMATION').subarray(0, 32), 0x20);
+  hdr.set(new TextEncoder().encode('EF DELTA ANIM').subarray(0, 32), 0x20);
 
   const chips = [];
   chips.push(mkChip(0, 0x8000, roml0));
   chips.push(mkChip(0, 0xA000, romh0));
 
-  for (let b = 0; b < n; b++) {
-    const bankStreamOff = b * 16384;
-    const rl = new Uint8Array(8192).fill(0xFF);
-    rl.set(imageStream.subarray(bankStreamOff, bankStreamOff + 8192));
-    chips.push(mkChip(b + 1, 0x8000, rl));
-
-    const rh = new Uint8Array(8192).fill(0xFF);
-    rh.set(imageStream.subarray(bankStreamOff + 8192, bankStreamOff + 16384));
-    chips.push(mkChip(b + 1, 0xA000, rh));
+  for (let b = 0; b < packedBanks.length; b++) {
+    const bankData = packedBanks[b];
+    // ROML part (first 8KB)
+    chips.push(mkChip(b + 1, 0x8000, bankData.subarray(0, 8192)));
+    // ROMH part (next 8KB)
+    chips.push(mkChip(b + 1, 0xA000, bankData.subarray(8192, 16384)));
   }
 
   const totalSize = 64 + chips.reduce((a, c) => a + c.length, 0);
@@ -1281,6 +1380,7 @@ function buildEasyFlashAnimation(frames, bgColor) {
   let off = 64;
   for (const c of chips) { crt.set(c, off); off += c.length; }
 
+  console.log(`Delta EasyFlash CRT: ${n} frames packed across ${packedBanks.length} banks, total size ${totalSize} bytes`);
   return crt;
 }
 
@@ -1297,106 +1397,263 @@ function _buildSlideViewerAnim(numFrames, bgColor) {
 
   c.push(0x78, 0xD8);                               // SEI, CLD
   c.push(0xA9, 0x35, 0x85, 0x01);                   // LDA #$35, STA $01
-
-  c.push(0xA9, 0x7F, 0x8D, 0x0D, 0xDC);             // Disable NMI
-  c.push(0x8D, 0x0D, 0xDD);                         
+  c.push(0xA9, 0x7F, 0x8D, 0x0D, 0xDC, 0x8D, 0x0D, 0xDD); // Disable NMI
   c.push(0xAD, 0x0D, 0xDC, 0xAD, 0x0D, 0xDD);       
-
+  
   c.push(0xA9, 0x2B, 0x8D, 0x11, 0xD0);             // Blanked bitmap mode initially
   c.push(0xA9, 0xD8, 0x8D, 0x16, 0xD0);             // Multicolor
   c.push(0xA9, 0x18, 0x8D, 0x18, 0xD0);             
   c.push(0xA9, bgColor, 0x8D, 0x20, 0xD0);          
-  c.push(0xA9, bgColor, 0x8D, 0x21, 0xD0);          
+  c.push(0x8D, 0x21, 0xD0);          
 
   c.push(0xAD, 0x02, 0xDD, 0x09, 0x03, 0x8D, 0x02, 0xDD); // Bank 1
   c.push(0xAD, 0x00, 0xDD, 0x29, 0xFC, 0x09, 0x02, 0x8D, 0x00, 0xDD); 
 
   c.push(0xA9, 0x87, 0x8D, 0x02, 0xDE);             // 16K cart mode
 
-  c.push(0xA9, 0x01, 0x85, 0x02);                   // bank = 1
+  c.push(0xA9, 0x01, 0x85, 0x02, 0x8D, 0x00, 0xDE); // current_bank = 1, STA $DE00
+  c.push(0xA9, 0x00, 0x85, 0xFE);                   // read_ptr low = 0
+  c.push(0xA9, 0x80, 0x85, 0xFF);                   // read_ptr high = $80
   c.push(0xA9, 0x00, 0x85, 0xFB);                   // frame_idx = 0
-  c.push(0xA9, 0x00, 0x85, 0x03);                   // draw_bank = 0
+  c.push(0x85, 0x03);                               // draw_bank = 0
 
   const sf = here(); const sfA = abs();
-  c.push(0xA5, 0x02, 0x8D, 0x00, 0xDE);             // LDA bank, STA $DE00
-
-  c.push(0xA5, 0x03);                               // LDA $03
-  c.push(0xF0, 0x03);                               // BEQ +3 (jump over JMP if draw_bank == 0)
-  const bBank1_Jmp = here(); c.push(0x4C, 0x00, 0x00); // JMP bank1_dest
-
-  // Bank 0 Copy Routine
-  c.push(0xA2, 0x00);                               // LDX #0
-  const cb0_loop = here();
-  for (let i = 0; i < 32; i++) {
-    c.push(0xBD, 0x00, 0x80 + i);                   // LDA $8000+i*256,X
-    c.push(0x9D, 0x00, 0x20 + i);                   // STA $2000+i*256,X
-  }
-  for (let i = 0; i < 4; i++) {
-    c.push(0xBD, 0x00, 0xA0 + i);                   // LDA $A000+i*256,X
-    c.push(0x9D, 0x00, 0x04 + i);                   // STA $0400+i*256,X
-  }
-  c.push(0xE8);                                     // INX
-  c.push(0xF0, 0x03);                               // BEQ +3 (skip JMP if X wrapped to 0)
-  const loop0A = B + cb0_loop;
-  c.push(0x4C, loop0A & 0xFF, (loop0A >> 8) & 0xFF); // JMP cb0_loop
   
-  const bDestDone = here(); c.push(0x4C, 0x00, 0x00); // JMP color_copy
+  c.push(0xA0, 0x00);                               // LDY #0
+  
+  // Check if read_ptr high byte ($FF) is >= $C0
+  c.push(0xA5, 0xFF);                               // LDA $FF
+  c.push(0xC9, 0xC0);                               // CMP #$C0
+  const bEndC0 = here(); c.push(0xB0, 0x00);        // BCS force_switch_bank
+  
+  // Read Byte 0
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  c.push(0xC9, 0xFF);                               // CMP #$FF
+  const bEndMarker = here(); c.push(0xD0, 0x00);    // BNE read_header
+  
+  // force_switch_bank / Switch to next bank
+  const fsbOff = here();
+  c[bEndC0 + 1] = rel(bEndC0, fsbOff);
+  
+  c.push(0xE6, 0x02);                               // INC $02
+  c.push(0xA5, 0x02, 0x8D, 0x00, 0xDE);             // LDA $02, STA $DE00
+  c.push(0xA9, 0x00, 0x85, 0xFE);                   // LDA #0, STA $FE
+  c.push(0xA9, 0x80, 0x85, 0xFF);                   // LDA #$80, STA $FF
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  
+  // read_header
+  const rhOff = here();
+  c[bEndMarker + 1] = rel(bEndMarker, rhOff);
+  
+  c.push(0x85, 0x04);                               // STA $04 (num_bmp_pages)
+  c.push(0xC8);                                     // INY
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  c.push(0x85, 0x05);                               // STA $05 (num_scr_pages)
+  c.push(0xC8);                                     // INY
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  c.push(0x85, 0x06);                               // STA $06 (num_col_pages)
+  
+  // Advance read_ptr by 4
+  c.push(0xA5, 0xFE, 0x18, 0x69, 0x04, 0x85, 0xFE); // LDA $FE, CLC, ADC #4, STA $FE
+  c.push(0x90, 0x02, 0xE6, 0xFF);                   // BCC +2, INC $FF
 
-  // Bank 1 Copy Routine
-  const bank1A = abs(); 
-  c[bBank1_Jmp + 1] = bank1A & 0xFF;
-  c[bBank1_Jmp + 2] = (bank1A >> 8) & 0xFF;
-  c.push(0xA2, 0x00);                               // LDX #0
-  const cb1_loop = here();
-  for (let i = 0; i < 32; i++) {
-    c.push(0xBD, 0x00, 0x80 + i);                   
-    c.push(0x9D, 0x00, 0x60 + i);                   
-  }
-  for (let i = 0; i < 4; i++) {
-    c.push(0xBD, 0x00, 0xA0 + i);                   
-    c.push(0x9D, 0x00, 0x44 + i);                   
-  }
-  c.push(0xE8);                                     // INX
-  c.push(0xF0, 0x03);                               // BEQ +3 (skip JMP)
-  const loop1A = B + cb1_loop;
-  c.push(0x4C, loop1A & 0xFF, (loop1A >> 8) & 0xFF); // JMP cb1_loop
+  // Copy Bitmap Pages
+  c.push(0xA5, 0x04);                               // LDA $04
+  const bBmpDone = here(); c.push(0xF0, 0x00);      // BEQ end_bmp
+  
+  // bmp_loop
+  const blOff = here();
+  c.push(0xA0, 0x00);                               // LDY #0
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y (page_idx)
+  
+  c.push(0xA6, 0x03);                               // LDX $03 (draw_bank)
+  const bBmp1 = here(); c.push(0xD0, 0x00);         // BNE bmp_bank1
+  c.push(0x18, 0x69, 0x20);                         // CLC, ADC #$20
+  const bBmpDest = here(); c.push(0xD0, 0x00);      // BNE bmp_dest_done (always taken)
+  
+  // bmp_bank1
+  const bb1Off = here(); c[bBmp1 + 1] = rel(bBmp1, bb1Off);
+  c.push(0x18, 0x69, 0x60);                         // CLC, ADC #$60
+  
+  // bmp_dest_done
+  const bbdOff = here(); 
+  c[bBmpDest + 1] = rel(bBmpDest, bbdOff);
+  
+  // Self-modify dest address high byte
+  c.push(0x8D, 0x00, 0x00);                         // STA dest_addr+2
+  const smBmpHighAddr = here() - 2;
+  
+  // Advance read_ptr by 1
+  c.push(0xE6, 0xFE);                               // INC $FE
+  c.push(0xD0, 0x02);                               // BNE +2
+  c.push(0xE6, 0xFF);                               // INC $FF
+  
+  // Copy 256 bytes
+  c.push(0xA0, 0x00);                               // LDY #0
+  const cbLoop = here();
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  c.push(0x99, 0x00, 0x20);                         // STA $2000,Y
+  const smBmpSTAAddr = here() - 2;
+  c.push(0xC8);                                     // INY
+  const bCbLoop = here(); c.push(0xD0, 0x00);       // BNE cbLoop
+  c[bCbLoop + 1] = rel(bCbLoop, cbLoop);
+  
+  // Advance read_ptr high byte by 1
+  c.push(0xE6, 0xFF);                               // INC $FF
+  
+  c.push(0xC6, 0x04);                               // DEC $04
+  const bBmpLoop = here(); c.push(0xD0, 0x00);      // BNE bmp_loop
+  c[bBmpLoop + 1] = rel(bBmpLoop, blOff);
+  
+  // end_bmp
+  const ebOff = here(); c[bBmpDone + 1] = rel(bBmpDone, ebOff);
 
-  const destDoneA = abs(); 
-  c[bDestDone + 1] = destDoneA & 0xFF; 
-  c[bDestDone + 2] = (destDoneA >> 8) & 0xFF;
+  // Copy Screen Pages
+  c.push(0xA5, 0x05);                               // LDA $05
+  const bScrDone = here(); c.push(0xF0, 0x00);      // BEQ end_scr
+  
+  // scr_loop
+  const slOff = here();
+  c.push(0xA0, 0x00);                               // LDY #0
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y (page_idx)
+  
+  c.push(0xA6, 0x03);                               // LDX $03 (draw_bank)
+  const bScr1 = here(); c.push(0xD0, 0x00);         // BNE scr_bank1
+  c.push(0x18, 0x69, 0x04);                         // CLC, ADC #$04
+  const bScrDest = here(); c.push(0xD0, 0x00);      // BNE scr_dest_done (always taken)
+  
+  // scr_bank1
+  const bs1Off = here(); c[bScr1 + 1] = rel(bScr1, bs1Off);
+  c.push(0x18, 0x69, 0x44);                         // CLC, ADC #$44
+  
+  // scr_dest_done
+  const bsdOff = here(); 
+  c[bScrDest + 1] = rel(bScrDest, bsdOff);
+  
+  // Self-modify dest address high byte
+  c.push(0x8D, 0x00, 0x00);                         // STA dest_scr+2
+  const smScrHighAddr = here() - 2;
+  
+  // Advance read_ptr by 1
+  c.push(0xE6, 0xFE);                               // INC $FE
+  c.push(0xD0, 0x02);                               // BNE +2
+  c.push(0xE6, 0xFF);                               // INC $FF
+  
+  // Copy 256 bytes
+  c.push(0xA0, 0x00);                               // LDY #0
+  const csLoop = here();
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  c.push(0x99, 0x00, 0x04);                         // STA $0400,Y
+  const smScrSTAAddr = here() - 2;
+  c.push(0xC8);                                     // INY
+  const bCsLoop = here(); c.push(0xD0, 0x00);       // BNE csLoop
+  c[bCsLoop + 1] = rel(bCsLoop, csLoop);
+  
+  // Advance read_ptr high byte by 1
+  c.push(0xE6, 0xFF);                               // INC $FF
+  
+  c.push(0xC6, 0x05);                               // DEC $05
+  const bScrLoop = here(); c.push(0xD0, 0x00);      // BNE scr_loop
+  c[bScrLoop + 1] = rel(bScrLoop, slOff);
+  
+  // end_scr
+  const esOff = here(); c[bScrDone + 1] = rel(bScrDone, esOff);
 
-  // Color RAM Copy
-  c.push(0xAD, 0x11, 0xD0);                         // LDA $D011
-  c.push(0x10, 0xFB);                               // BPL *-3 (wait until bit 7 is set)
+  // Raster Sync
+  const wrOff = here();
+  c.push(0xAD, 0x12, 0xD0);                         // LDA $D012
+  c.push(0xC9, 0xFE);                               // CMP #$FE
+  const bWr = here(); c.push(0xD0, 0x00);           // BNE wait_raster
+  c[bWr + 1] = rel(bWr, wrOff);
 
-  c.push(0xA2, 0x00);                               // LDX #0
-  const col_loop = here();
-  for (let i = 0; i < 4; i++) {
-    c.push(0xBD, 0x00, 0xA4 + i);                   // LDA $A400+i*256,X
-    c.push(0x9D, 0x00, 0xD8 + i);                   // STA $D800+i*256,X
-  }
-  c.push(0xE8);                                     // INX
-  const bCol = here(); c.push(0xD0, 0x00);           // BNE col_loop
-  c[bCol + 1] = rel(bCol, col_loop);
+  // Copy Color Pages
+  c.push(0xA5, 0x06);                               // LDA $06
+  const bColDone = here(); c.push(0xF0, 0x00);      // BEQ end_col
+  
+  // col_loop
+  const clLoopOff = here();
+  c.push(0xA0, 0x00);                               // LDY #0
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  
+  c.push(0x18, 0x69, 0xD8);                         // CLC, ADC #$D8
+  c.push(0x8D, 0x00, 0x00);                         // STA dest_col+2
+  const smColHighAddr = here() - 2;
+  
+  // Advance read_ptr by 1
+  c.push(0xE6, 0xFE);                               // INC $FE
+  c.push(0xD0, 0x02);                               // BNE +2
+  c.push(0xE6, 0xFF);                               // INC $FF
+  
+  // Copy 256 bytes
+  c.push(0xA0, 0x00);                               // LDY #0
+  const ccLoop = here();
+  c.push(0xB1, 0xFE);                               // LDA ($FE),Y
+  c.push(0x99, 0x00, 0xD8);                         // STA $D800,Y
+  const smColSTAAddr = here() - 2;
+  c.push(0xC8);                                     // INY
+  const bCcLoop = here(); c.push(0xD0, 0x00);       // BNE ccLoop
+  c[bCcLoop + 1] = rel(bCcLoop, ccLoop);
+  
+  // Advance read_ptr high byte by 1
+  c.push(0xE6, 0xFF);                               // INC $FF
+  
+  c.push(0xC6, 0x06);                               // DEC $06
+  const bColLoop = here(); c.push(0xD0, 0x00);      // BNE col_loop
+  c[bColLoop + 1] = rel(bColLoop, clLoopOff);
+  
+  // end_col
+  const ecolOff = here(); c[bColDone + 1] = rel(bColDone, ecolOff);
 
-  c.push(0xA9, 0x3B, 0x8D, 0x11, 0xD0);             // Unblank screen
-  c.push(0xAD, 0x00, 0xDD, 0x49, 0x01, 0x8D, 0x00, 0xDD); // Toggle VIC bank
+  c.push(0xA9, 0x3B, 0x8D, 0x11, 0xD0);             // LDA #$3B, STA $D011 (unblank)
+  c.push(0xAD, 0x00, 0xDD, 0x49, 0x01, 0x8D, 0x00, 0xDD); // EOR #$01, STA $DD00
+  c.push(0xA5, 0x03, 0x49, 0x01, 0x85, 0x03);       // EOR #$01, STA $03 (toggle draw_bank)
 
-  c.push(0xA5, 0x03, 0x49, 0x01, 0x85, 0x03);       // Toggle draw bank
+  // Playback Delay (Wait 2 vertical sync frames for 25 FPS)
+  c.push(0xA9, 0x02, 0x85, 0x04);                   // LDA #2, STA $04
+  const wdOff = here();
+  const wrsOff = here();
+  c.push(0xAD, 0x12, 0xD0, 0xC9, 0xFE);             // LDA $D012, CMP #$FE
+  const bWrs = here(); c.push(0xD0, 0x00);          // BNE wait_raster_start
+  c[bWrs + 1] = rel(bWrs, wrsOff);
+  
+  const wrpOff = here();
+  c.push(0xAD, 0x12, 0xD0, 0xC9, 0xFE);             // LDA $D012, CMP #$FE
+  const bWrp = here(); c.push(0xF0, 0x00);          // BEQ wait_raster_pass
+  c[bWrp + 1] = rel(bWrp, wrpOff);
+  
+  c.push(0xC6, 0x04);                               // DEC $04
+  const bWdLoop = here(); c.push(0xD0, 0x00);       // BNE wdOff
+  c[bWdLoop + 1] = rel(bWdLoop, wdOff);
 
-  // Advance Frame (No wait loop!)
-  c.push(0xE6, 0xFB);                               // INC frame_idx
-  c.push(0xE6, 0x02);                               // INC bank
-  c.push(0xA5, 0xFB);                               // LDA frame_idx
+  // Advance Frame Index
+  c.push(0xE6, 0xFB);                               // INC $FB
+  c.push(0xA5, 0xFB);                               // LDA $FB
   c.push(0xC9, numFrames & 0xFF);                    // CMP #numFrames
-  const bRst = here(); c.push(0xF0, 0x00);           // BEQ reset
+  const bNextFrame = here(); c.push(0xD0, 0x00);    // BNE next_frame
+  
+  // RESET MOVIE
+  c.push(0xA9, 0x00, 0x85, 0xFB);                   // frame_idx = 0
+  c.push(0xA9, 0x01, 0x85, 0x02, 0x8D, 0x00, 0xDE); // current_bank = 1, STA $DE00
+  c.push(0xA9, 0x00, 0x85, 0xFE);                   // read_ptr low = 0
+  c.push(0xA9, 0x80, 0x85, 0xFF);                   // read_ptr high = $80
+  c.push(0x4C, sfA & 0xFF, (sfA >> 8) & 0xFF);      // JMP show_frame
+  
+  // next_frame
+  const nfOff = here(); c[bNextFrame + 1] = rel(bNextFrame, nfOff);
   c.push(0x4C, sfA & 0xFF, (sfA >> 8) & 0xFF);      // JMP show_frame
 
-  const rstOff = here();
-  c[bRst + 1] = rel(bRst, rstOff);
-  c.push(0xA9, 0x00, 0x85, 0xFB);                   // frame_idx = 0
-  c.push(0xA9, 0x01, 0x85, 0x02);                   // bank = 1
-  c.push(0x4C, sfA & 0xFF, (sfA >> 8) & 0xFF);      // JMP show_frame
+  // Write high-byte modifications
+  const targetBmpAbs = B + smBmpSTAAddr + 1;
+  c[smBmpHighAddr] = targetBmpAbs & 0xFF;
+  c[smBmpHighAddr + 1] = (targetBmpAbs >> 8) & 0xFF;
+
+  const targetScrAbs = B + smScrSTAAddr + 1;
+  c[smScrHighAddr] = targetScrAbs & 0xFF;
+  c[smScrHighAddr + 1] = (targetScrAbs >> 8) & 0xFF;
+
+  const targetColAbs = B + smColSTAAddr + 1;
+  c[smColHighAddr] = targetColAbs & 0xFF;
+  c[smColHighAddr + 1] = (targetColAbs >> 8) & 0xFF;
 
   return new Uint8Array(c);
 }
