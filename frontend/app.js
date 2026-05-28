@@ -986,6 +986,15 @@ function _buildSlideViewer(numFrames, bgColor) {
   // ===== INIT =====
   c.push(0x78);                                     // SEI
   c.push(0xD8);                                     // CLD
+
+  // Mute SID registers to prevent start-up hum/buzz
+  c.push(0xA2, 0x18);                               // LDX #$18
+  c.push(0xA9, 0x00);                               // LDA #$00
+  // loop:
+  c.push(0x9D, 0x00, 0xD4);                         // STA $D400,X
+  c.push(0xCA);                                     // DEX
+  c.push(0x10, 0xFA);                               // BPL loop
+
   c.push(0xA9, 0x35, 0x85, 0x01);                   // LDA #$35, STA $01
 
   // Disable CIA interrupts (prevent NMI)
@@ -1396,6 +1405,15 @@ function _buildSlideViewerAnim(numFrames, bgColor) {
   };
 
   c.push(0x78, 0xD8);                               // SEI, CLD
+
+  // Mute SID registers to prevent start-up hum/buzz
+  c.push(0xA2, 0x18);                               // LDX #$18
+  c.push(0xA9, 0x00);                               // LDA #$00
+  // loop:
+  c.push(0x9D, 0x00, 0xD4);                         // STA $D400,X
+  c.push(0xCA);                                     // DEX
+  c.push(0x10, 0xFA);                               // BPL loop
+
   c.push(0xA9, 0x35, 0x85, 0x01);                   // LDA #$35, STA $01
   c.push(0xA9, 0x7F, 0x8D, 0x0D, 0xDC, 0x8D, 0x0D, 0xDD); // Disable NMI
   c.push(0xAD, 0x0D, 0xDC, 0xAD, 0x0D, 0xDD);       
