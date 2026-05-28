@@ -56,7 +56,7 @@ StreamMode currentMode = M_MC_COLOR;
 #define FLI_FRAME_SIZE 17001
 #define IFLI_FRAME_SIZE 34001
 #define IS_HIRES (currentMode == M_HR_GRAY || currentMode == M_HR_COLOR)
-#define IS_COLOR (currentMode == M_MC_COLOR || currentMode == M_HR_COLOR || currentMode == M_MC_FLI || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
+#define IS_COLOR (currentMode == M_MC_COLOR || currentMode == M_HR_COLOR || currentMode == M_MC_FLI || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI || currentMode == M_MC_GRAY)
 #define IS_FLI   (currentMode == M_MC_FLI || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
 #define IS_IFLI  (currentMode == M_MC_GRAY_IFLI)
 #define IS_GRAY_MODE (currentMode == M_MC_GRAY || currentMode == M_HR_GRAY || currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY_IFLI)
@@ -612,7 +612,7 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
                   }
                   final_col = (ifli_pair_h[best_idx] << 4) | (ifli_pair_l[best_idx] & 0x0F);
                   ar = ag = ab = ifli_lumas[best_idx];
-                } else if (currentMode == M_MC_GRAY_FLI) {
+                } else if (currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY) {
                   final_col = find_best_gray_c64(tr, ar);
                   ag = ab = ar;
                 } else {
@@ -645,7 +645,7 @@ bool process_output(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitm
                 
                 color_buffer[ty * wTarget + tx] = final_col;
               } else {
-                if (currentMode == M_MC_GRAY_FLI) {
+                if (currentMode == M_MC_GRAY_FLI || currentMode == M_MC_GRAY) {
                   color_buffer[ty * wTarget + tx] = rgb565_to_dithered_gray(pix, tx, ty);
                 } else if (currentMode == M_MC_GRAY_IFLI) {
                   color_buffer[ty * wTarget + tx] = rgb565_to_ifli_gray(pix, tx, ty);
@@ -2137,7 +2137,7 @@ void loop() {
           } else {
             uint8_t* screen_ram = render_buffer + 8000;
             uint8_t* color_ram  = render_buffer + 9000;
-            uint8_t staticScreen = IS_HIRES ? 0x10 : 0xBC;
+            uint8_t staticScreen = 0x10; // Simple black/white for Hi-Res Gray
             memset(screen_ram, staticScreen, 1000);
             memset(color_ram, 1, 1000);
           }
