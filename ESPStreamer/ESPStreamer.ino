@@ -361,9 +361,10 @@ void packC64Frame() {
             }
           }
           counts[bgColor] = -1;
-          uint8_t cellCol = 0; int mCell = -1;
+          uint8_t cellCol = bgColor; int mCell = -1;
           for(int i=0; i<16; i++) { if(counts[i] > mCell) { mCell = counts[i]; cellCol = i; } }
-          if (mCell <= 0 || IS_IFLI) cellCol = 1; 
+          if (mCell <= 0) cellCol = bgColor;
+          else if (IS_IFLI) cellCol = 1; 
           fli_color_ram[cellIdx] = cellCol;
   
           for (int py = 0; py < 8; py++) {
@@ -373,7 +374,7 @@ void packC64Frame() {
             }
             lCounts[bgColor] = -1;
             lCounts[cellCol] = -1;
-            uint8_t c1=0, c2=0; int m1=0, m2=0;
+            uint8_t c1=bgColor, c2=bgColor; int m1=0, m2=0;
             for(int i=0; i<16; i++){
               if(lCounts[i]>m1){ m2=m1;c2=c1; m1=lCounts[i];c1=i; }
               else if(lCounts[i]>m2){ m2=lCounts[i];c2=i; }
@@ -423,6 +424,7 @@ void packC64Frame() {
           if (counts[i] > max_bg) { max_fg = max_bg; fg = bg; max_bg = counts[i]; bg = i; }
           else if (counts[i] > max_fg) { max_fg = counts[i]; fg = i; }
         }
+        if (max_fg <= 0) fg = bg;
         
         screen_ram[cellIdx] = (fg << 4) | (bg & 0x0F);
         
@@ -448,14 +450,14 @@ void packC64Frame() {
         
         counts[bgColor] = -1; 
         
-        uint8_t c1=0, c2=0, c3=0;
+        uint8_t c1=bgColor, c2=bgColor, c3=bgColor;
         int m1=0, m2=0, m3=0;
         for(int i=0;i<16;i++){
           if(counts[i]>m1){ m3=m2;c3=c2; m2=m1;c2=c1; m1=counts[i];c1=i; }
           else if(counts[i]>m2){ m3=m2;c3=c2; m2=counts[i];c2=i; }
           else if(counts[i]>m3){ m3=counts[i];c3=i; }
         }
-        if(m1==0) c1=1; // Fallback if perfectly solid bgColor
+        if(m1==0) c1=bgColor; // Fallback if perfectly solid bgColor
         if(m2==0) c2=c1;
         if(m3==0) c3=c1;
         

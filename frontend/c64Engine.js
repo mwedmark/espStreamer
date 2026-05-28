@@ -150,16 +150,17 @@ window.C64Engine = (function () {
                         // FLI Logic: 8 screens starting at base + 8000, color ram at base + 16000
                         const cnts = preAllocated.cnts; cnts.fill(0);
                         for (let py = 0; py < 8; py++) for (let px = 0; px < 4; px++) cnts[getCol((cy * 8 + py) * 160 + (cx * 4 + px))]++;
-                        cnts[bgC] = -1; let cC = 1, mcC = -1;
+                        cnts[bgC] = -1; let cC = bgC, mcC = -1;
                         for (let i = 0; i < 16; i++) if (cnts[i] > mcC) { mcC = cnts[i]; cC = i; }
-                        if (mcC <= 0 || isI) cC = 1;
+                        if (mcC <= 0) cC = bgC;
+                        else if (isI) cC = 1;
                         b[base + 16000 + cIdx] = cC;
 
                         for (let py = 0; py < 8; py++) {
                             const lc = preAllocated.lc; lc.fill(0);
                             for (let px = 0; px < 4; px++) lc[getCol((cy * 8 + py) * 160 + (cx * 4 + px))]++;
                             lc[bgC] = -1; lc[cC] = -1;
-                            let c1 = 0, c2 = 0, m1 = 0, m2 = 0;
+                            let c1 = bgC, c2 = bgC, m1 = 0, m2 = 0;
                             for (let i = 0; i < 16; i++) {
                                 if (lc[i] > m1) { m2 = m1; c2 = c1; m1 = lc[i]; c1 = i; }
                                 else if (lc[i] > m2) { m2 = lc[i]; c2 = i; }
@@ -188,6 +189,7 @@ window.C64Engine = (function () {
                         for (let py = 0; py < 8; py++) for (let px = 0; px < 8; px++) cnts[cb[(cy * 8 + py) * 320 + (cx * 8 + px)]]++;
                         let bg = 0, fg = 1, mB = -1, mF2 = -1;
                         for (let i = 0; i < 16; i++) { if (cnts[i] > mB) { mF2 = mB; fg = bg; mB = cnts[i]; bg = i; } else if (cnts[i] > mF2) { mF2 = cnts[i]; fg = i; } }
+                        if (mF2 <= 0) fg = bg;
                         b[base + 8000 + cIdx] = (fg << 4) | (bg & 15);
                         for (let py = 0; py < 8; py++) {
                             let pb = 0;
@@ -204,9 +206,9 @@ window.C64Engine = (function () {
                         // Standard Multicolor: Screen @ 8000, Color @ 9000
                         const cnts = preAllocated.cnts; cnts.fill(0);
                         for (let py = 0; py < 8; py++) for (let px = 0; px < 4; px++) cnts[cb[(cy * 8 + py) * 160 + (cx * 4 + px)]]++;
-                        cnts[bgC] = -1; let c1 = 1, c2 = 1, c3 = 1, m1 = 0, m2 = 0, m3 = 0;
+                        cnts[bgC] = -1; let c1 = bgC, c2 = bgC, c3 = bgC, m1 = 0, m2 = 0, m3 = 0;
                         for (let i = 0; i < 16; i++) { if (cnts[i] > m1) { m3 = m2; c3 = c2; m2 = m1; c2 = c1; m1 = cnts[i]; c1 = i; } else if (cnts[i] > m2) { m3 = m2; c3 = c2; m2 = cnts[i]; c2 = i; } else if (cnts[i] > m3) { m3 = cnts[i]; c3 = i; } }
-                        if (m1 === 0) c1 = 1; if (m2 === 0) c2 = c1; if (m3 === 0) c3 = c1;
+                        if (m1 === 0) c1 = bgC; if (m2 === 0) c2 = c1; if (m3 === 0) c3 = c1;
                         b[base + 8000 + cIdx] = (c1 << 4) | (c2 & 15); b[base + 9000 + cIdx] = c3;
                         for (let py = 0; py < 8; py++) {
                             let pb = 0;
