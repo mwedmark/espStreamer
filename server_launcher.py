@@ -6,8 +6,8 @@ Starts the appropriate backend WebSocket server based on command-line arguments.
 
 import argparse
 import sys
-from backend_kungfu import KungFuFlashBackend
-from backend_vice import VICEBackend
+from backend_kungfu import KungFuFlashSerial
+from backend_vice import VICEKungFuSimulator
 from ws_server import run_server
 
 
@@ -54,10 +54,10 @@ Examples:
 
     # Create the appropriate backend
     if args.backend == "kung_fu":
-        backend = KungFuFlashBackend()
+        backend = KungFuFlashSerial()
         backend_name = "Kung Fu Flash"
     elif args.backend == "vice":
-        backend = VICEBackend(port=args.vice_port)
+        backend = VICEKungFuSimulator()
         backend_name = f"VICE Emulator (port {args.vice_port})"
     else:
         print(f"Unknown backend: {args.backend}")

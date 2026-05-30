@@ -9,10 +9,9 @@ import serial.tools.list_ports
 import time
 import threading
 from typing import Dict, Optional
-from backend_base import StreamingBackend
-from streamer_machinecode import add_rel, STREAMER_PRG, STREAMER_CRT
+from streamer_machinecode import STREAMER_PRG, STREAMER_CRT
 
-class KungFuFlashBackend(StreamingBackend):
+class KungFuFlashSerial:
     """Kung Fu Flash hardware backend via USB serial."""
 
     def __init__(self):
@@ -67,7 +66,6 @@ class KungFuFlashBackend(StreamingBackend):
                 write_timeout=2,
             )
             self.ser.dtr = True
-            self.ser.rts = True
             self.port_name = port
             self._connected = True
             self._viewer_running = True
@@ -91,7 +89,7 @@ class KungFuFlashBackend(StreamingBackend):
             self.ser = None
             return False
 
-    def disconnect(self) -> bool:
+    def disconnect(self):
         """Close serial connection."""
         if self.ser:
             try:
@@ -110,7 +108,6 @@ class KungFuFlashBackend(StreamingBackend):
         self.bitmap_buffers = [None, None]
         self.screen_buffers = [None, None]
         print("Disconnected from KFF")
-        return True
 
     def send_viewer(self, viewer_data: Optional[bytes] = None) -> bool:
         """Send the streamer PRG to KFF via EFSTART:PRG handshake."""
@@ -153,6 +150,8 @@ class KungFuFlashBackend(StreamingBackend):
                 return False
 
             offset = 0
+            actual_size = 0
+            chunk_size = 0
             while offset < len(prg_data):
                 size_req = self.ser.read(2)
                 if len(size_req) < 2:
@@ -174,7 +173,7 @@ class KungFuFlashBackend(StreamingBackend):
                 offset += actual_size
                 print(f"  Sent {offset}/{len(prg_data)} bytes")
 
-            if offset >= len(prg_data) and actual_size == chunk_size:
+            if offset >= len(prg_data) and actual_size > 0 and actual_size == chunk_size:
                 try:
                     self.ser.timeout = 0.5
                     size_req = self.ser.read(2)
@@ -200,7 +199,6 @@ class KungFuFlashBackend(StreamingBackend):
         except Exception as e:
             print(f"Failed to send viewer PRG: {e}")
             import traceback
-
             traceback.print_exc()
             return False
 
@@ -380,6 +378,8 @@ class KungFuFlashBackend(StreamingBackend):
             "viewer_running": self._viewer_running,
             "port": self.port_name,
             "frame_count": self.frame_count,
+            "is_viewer_running": self._viewer_running,
+            "backend_name": "Kung Fu Flash (Serial CDC)",
             "message": "Streaming"
             if self._viewer_running
             else "Connected"
@@ -394,3 +394,14 @@ class KungFuFlashBackend(StreamingBackend):
     @property
     def is_viewer_running(self) -> bool:
         return self._viewer_running
+
+    def __del__(self):
+        self.disconnect()
+
+
+# Export viewer binaries to disk for direct use
+with open("kungfu_viewer.prg", "wb") as f:
+    f.write(STREAMER_PRG)
+
+with open("kungfu_viewer.crt", "wb") as f:
+    f.write(STREAMER_CRT)

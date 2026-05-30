@@ -97,7 +97,7 @@ class UnifiedWebSocketServer:
                                 "command": "get_viewer",
                                 "success": True,
                                 "prg_data": encoded_prg,
-                                "filename": "kung_fu_viewer.prg",
+                                "filename": "kungfu_viewer.prg",
                             }
                         )
                     )

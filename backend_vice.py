@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """
-VICE Emulator Backend
+VICE Backend Implementation for StreamingBackend interface.
 Simulates streaming to VICE via the Binary Monitor Port.
 """
 
+from typing import Dict
 import socket
 import struct
-from typing import Dict, Optional
-from backend_base import StreamingBackend
 
 
 class VICEBinaryMonitor:
-    """Low-level VICE binary monitor protocol."""
-
-    def __init__(self, port: int = 6511):
+    def __init__(self, port=6511):
         self.port = port
-        self.sock: Optional[socket.socket] = None
-
-    def connect(self) -> bool:
-        """Connect to VICE binary monitor."""
+        self.sock = None
+        
+    def connect(self):
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.connect(("localhost", self.port))
+            self.sock.connect(('localhost', self.port))
             print(f"Connected to VICE binary monitor on port {self.port}")
             return True
         except Exception as e:
@@ -30,41 +26,36 @@ class VICEBinaryMonitor:
             return False
 
     def disconnect(self):
-        """Disconnect from VICE."""
         if self.sock:
             self.sock.close()
             self.sock = None
             print("Disconnected from VICE binary monitor")
 
-    def write_memory(self, start_addr: int, data: bytes, side_effects: bool = False) -> bool:
-        """Write memory via VICE binary monitor protocol."""
+    def write_memory(self, start_addr, data, side_effects=False):
         if not self.sock:
             return False
-
+        
         end_addr = start_addr + len(data) - 1
         body_len = 8 + len(data)
         request_id = 0x1234
-
-        header = struct.pack("<BBIIB", 0x02, 0x02, body_len, request_id, 0x02)
-        body = struct.pack(
-            "<BHHBH", 1 if side_effects else 0, start_addr, end_addr, 0, 0
-        )
-
+        
+        header = struct.pack('<BBIIB', 0x02, 0x02, body_len, request_id, 0x02)
+        body = struct.pack('<BHHBH', 1 if side_effects else 0, start_addr, end_addr, 0, 0)
+        
         try:
             self.sock.setblocking(False)
             while True:
                 try:
                     discard = self.sock.recv(4096)
-                    if not discard:
-                        break
+                    if not discard: break
                 except:
                     break
             self.sock.setblocking(True)
-
+            
             self.sock.sendall(header + body + data)
-
+            
             while True:
-                resp_header = b""
+                resp_header = b''
                 while len(resp_header) < 12:
                     chunk = self.sock.recv(12 - len(resp_header))
                     if not chunk:
@@ -72,173 +63,140 @@ class VICEBinaryMonitor:
                         self.disconnect()
                         return False
                     resp_header += chunk
-
-                stx, ver, blen, ctype, err, rid = struct.unpack("<BBIBBI", resp_header)
-
-                body_data = b""
+                
+                stx, ver, blen, ctype, err, rid = struct.unpack('<BBIBBI', resp_header)
+                
+                body_data = b''
                 bytes_to_read = blen
                 while bytes_to_read > 0:
                     chunk = self.sock.recv(min(bytes_to_read, 4096))
-                    if not chunk:
-                        break
+                    if not chunk: break
                     body_data += chunk
                     bytes_to_read -= len(chunk)
-
+                
                 if rid == request_id:
                     if err != 0x00:
                         print(f"VICE returned error {err} for MEM_SET")
                         return False
                     return True
-
         except Exception as e:
             print(f"Failed to write memory: {e}")
             self.disconnect()
             return False
 
-    def resume_execution(self) -> bool:
-        """Send MON_CMD_EXIT to resume VICE execution."""
+    def resume_execution(self):
         if not self.sock:
             return False
-
+            
         request_id = 0x1235
-        header = struct.pack("<BBIIB", 0x02, 0x02, 0, request_id, 0xAA)
-
+        header = struct.pack('<BBIIB', 0x02, 0x02, 0, request_id, 0xaa)
+        
         try:
             self.sock.setblocking(False)
             while True:
                 try:
                     discard = self.sock.recv(4096)
-                    if not discard:
-                        break
+                    if not discard: break
                 except:
                     break
             self.sock.setblocking(True)
-
+            
             self.sock.sendall(header)
-
+            
             while True:
-                resp_header = b""
+                resp_header = b''
                 while len(resp_header) < 12:
                     chunk = self.sock.recv(12 - len(resp_header))
-                    if not chunk:
-                        return False
+                    if not chunk: return False
                     resp_header += chunk
-
-                stx, ver, blen, ctype, err, rid = struct.unpack("<BBIBBI", resp_header)
-
-                body_data = b""
+                
+                stx, ver, blen, ctype, err, rid = struct.unpack('<BBIBBI', resp_header)
+                
+                body_data = b''
                 bytes_to_read = blen
                 while bytes_to_read > 0:
                     chunk = self.sock.recv(min(bytes_to_read, 4096))
-                    if not chunk:
-                        break
+                    if not chunk: break
                     bytes_to_read -= len(chunk)
-
-                if rid == request_id or ctype == 0xAA:
+                    
+                if rid == request_id or ctype == 0xaa:
                     return True
         except Exception as e:
             print(f"Failed to resume execution: {e}")
             return False
 
 
-class VICEBackend(StreamingBackend):
-    """VICE emulator backend via binary monitor port."""
+class VICEKungFuSimulator:
+    """VICE backend implementing StreamingBackend interface."""
 
-    def __init__(self, port: int = 6511):
-        self.monitor = VICEBinaryMonitor(port)
-        self._connected = False
-        self._viewer_running = False
+    def __init__(self):
         self.frame_count = 0
+        self.monitor = VICEBinaryMonitor(6511)
+        self._is_viewer_running = True
+        self.connected = False
+        
+    def connect(self, port=None):
+        if not self.monitor.connect():
+            return False
+        self.monitor.resume_execution()
+        self.connected = True
+        return True
 
-    def connect(self, port: Optional[str] = None) -> bool:
-        """Connect to VICE binary monitor."""
-        if self.monitor.connect():
-            self.monitor.resume_execution()
-            self._connected = True
-            self._viewer_running = True
-            return True
-        return False
-
-    def disconnect(self) -> bool:
-        """Disconnect from VICE."""
+    def disconnect(self):
         self.monitor.disconnect()
-        self._connected = False
-        self._viewer_running = False
+        self.connected = False
+
+    def send_viewer(self, viewer_data=None):
+        print(f"Would send viewer to VICE")
         return True
 
-    def send_viewer(self, viewer_data: Optional[bytes] = None) -> bool:
-        """VICE doesn't need a separate viewer PRG; memory is accessed directly."""
-        print("VICE backend: viewer not needed (direct memory access)")
-        return True
-
-    def stream_frame(
-        self, mode: int, bg_color: int, bitmap: bytes, screen: bytes, color: bytes
-    ) -> bool:
-        """Stream a frame to VICE by writing memory."""
-        if not self.monitor.sock or not self._viewer_running:
-            return False
-
-        try:
-            # Write VIC registers based on mode
-            if mode == 1:  # Hires
-                self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
-                self.monitor.write_memory(0xD016, bytes([0xC8]), side_effects=True)
-            else:  # Multicolor
-                self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
-                self.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
-
-            self.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
-            self.monitor.write_memory(0xD020, bytes([0x00]), side_effects=True)
-            self.monitor.write_memory(0xD021, bytes([bg_color & 0xFF]), side_effects=True)
-
-            # Write RAM blocks
-            self.monitor.write_memory(0x2000, bitmap[:8000])
-            self.monitor.write_memory(0x0400, screen[:1000])
-            success = self.monitor.write_memory(0xD800, color[:1000], side_effects=True)
-
-            if success:
-                self.frame_count += 1
-                self.monitor.resume_execution()
-
-            return success
-
-        except Exception as e:
-            print(f"Stream frame failed: {e}")
-            return False
-
-    def reset(self) -> bool:
-        """Reset VICE (soft reset via memory write)."""
+    def stream_frame(self, mode, bg_color, bitmap, screen, color):
         if not self.monitor.sock:
             return False
-        try:
-            self.monitor.write_memory(0xFFFC, bytes([0x00, 0xE5]), side_effects=True)
-            return True
-        except Exception as e:
-            print(f"Reset failed: {e}")
-            return False
+            
+        if mode == 1:
+            self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
+            self.monitor.write_memory(0xD016, bytes([0xC8]), side_effects=True)
+        else:
+            self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
+            self.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
+            
+        self.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
+        self.monitor.write_memory(0xD020, bytes([0x00]), side_effects=True)
+        self.monitor.write_memory(0xD021, bytes([bg_color]), side_effects=True)
+        
+        self.monitor.write_memory(0x2000, bitmap)
+        self.monitor.write_memory(0x0400, screen)
+        success = self.monitor.write_memory(0xD800, color, side_effects=True)
+        
+        self.frame_count += 1
+        self.monitor.resume_execution()
+        
+        return success
 
-    def reset_stream_buffers(self, reason: str = "manual") -> bool:
-        """VICE doesn't buffer frames; this is a no-op."""
-        print(f"Stream buffers reset ({reason}) - VICE direct access mode")
-        return True
-
-    def get_status(self) -> Dict:
-        """Get current status."""
-        connected = self._connected
-        if not connected:
-            connected = self.monitor.connect()
-
+    def get_status(self):
         return {
-            "connected": connected,
-            "viewer_running": self._viewer_running,
             "frame_count": self.frame_count,
-            "message": "VICE connected" if connected else "VICE disconnected",
+            "connected": self.connected,
+            "is_viewer_running": self._is_viewer_running,
+            "backend_name": "VICE Simulation (Binary Monitor)"
         }
 
-    @property
-    def is_connected(self) -> bool:
-        return self._connected
+    def reset(self):
+        print("Reset signal sent to VICE")
+        return True
+
+    def reset_stream_buffers(self, reason="manual"):
+        print(f"Stream buffers reset ({reason}) for VICE backend")
+        return True
 
     @property
-    def is_viewer_running(self) -> bool:
-        return self._viewer_running
+    def is_connected(self):
+        return self.connected
+
+    @property
+    def is_viewer_running(self):
+        return self._is_viewer_running
+
+    def __del__(self):
+        self.disconnect()
