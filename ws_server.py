@@ -83,7 +83,7 @@ class UnifiedWebSocketServer:
 
                 def get_viewer_data():
                     try:
-                        from backend_kungfu import STREAMER_PRG
+                        from streamer_machinecode import STREAMER_PRG
                         return base64.b64encode(STREAMER_PRG).decode('utf-8')
                     except ImportError:
                         return None
