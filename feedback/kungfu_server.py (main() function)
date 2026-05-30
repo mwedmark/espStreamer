@@ -1,0 +1,14 @@
+Location: WebSocket server shutdown handling
+
+Current State:
+- No explicit cleanup of serial connections on Ctrl+C  
+- asyncio.Future() used but no proper task cancellation handlers  
+- Serial port resources may remain open after program termination  
+- No signal handlers for SIGTERM/SIGINT before exit
+
+Suggested Improvements:
+1. Add signal handlers to close all connections and reset hardware state  
+2. Implement proper async context managers or cleanup hooks  
+3. Track active tasks and cancel them gracefully on shutdown  
+4. Add final health check before reporting "Server stopped"
+5. Document expected shutdown sequence in README

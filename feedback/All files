@@ -1,0 +1,12 @@
+Current State:
+- Some print() calls mixed with proper logging stubs in others  
+- No centralized logger configuration (logging.basicConfig missing)
+- Missing structured log format for production environments  
+- Frame transmission metrics not persisted or exposed via API
+
+Suggested Improvements:
+1. Replace all print() with logger.debug/info/warning/error calls  
+2. Add metrics tracking (frames per second, bytes sent, error rates)  
+3. Implement connection statistics dashboard endpoint  
+4. Log delta compression ratios for performance analysis  
+5. Add structured JSON logging option for Kubernetes/containerization

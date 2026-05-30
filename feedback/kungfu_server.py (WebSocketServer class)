@@ -1,0 +1,14 @@
+Location: Binary message handling and JSON command parsing
+
+Current State:
+- Binary payload format assumed but not documented  
+- No version negotiation or protocol handshake mechanism
+- Missing authentication/authorization checks for multi-user setup
+- Websocket frames lack proper fragmentation handling for large payloads
+
+Suggested Improvements:
+1. Implement WebSocket protocol version negotiation on connect
+2. Add optional JWT token authentication for server endpoints
+3. Document binary frame format as separate specification file
+4. Handle fragmented WebSocket frames for 8KB+ payloads  
+5. Add heartbeat/ping-pong mechanism to detect stale connections

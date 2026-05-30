@@ -1,0 +1,14 @@
+Location: Hardcoded values throughout codebase
+
+Current State:
+- Magic numbers everywhere (e.g., 0x0400 for screen RAM address)  
+- Hardcoded port numbers (8765 for WebSocket, 6511 for VICE)  
+- No config file or environment variable support
+- Machine code addresses hardcoded in multiple locations
+
+Suggested Improvements:
+1. Create config.yaml or .env file with all configurable parameters
+2. Move machine code base addresses to constants at class initialization  
+3. Add portability wrapper for cross-platform serial device detection
+4. Implement command-line argument parser via argparse/typer  
+5. Add validation layer that checks runtime vs expected values
