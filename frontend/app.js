@@ -1,6 +1,6 @@
 // ESPStreamer Frontend Logic - VERSION 8.4 (Syntax Hardened)
 let currentClientMode = 'mc_gray', isHires = false, isFLI = false, isIFLI = false, currentBgColor = 0;
-let running = true, usePCBackend = true, screenshots = [];
+let running = true, usePCBackend = true, screenshots = [], showRawStream = false;
 let lastStatsTime = 0, lastFrames = 0, lastKB = 0, currentFPS = 0, currentKBs = 0;
 
 // Kung Fu Flash WebSocket client
@@ -1850,6 +1850,44 @@ async function convertScreenshotToC64(screenshot, frameIndex) {
   return frameData;
 }
 
+// ==========================================================
+// Raw Stream Viewer — mirrors the source MJPEG frame
+// ==========================================================
+function toggleRawStream() {
+  showRawStream = !showRawStream;
+  const panel = document.getElementById('raw-panel');
+  const btn   = document.getElementById('btn-raw-stream');
+  if (showRawStream) {
+    panel.classList.add('visible');
+    if (btn) {
+      btn.style.background   = 'linear-gradient(180deg, rgba(60,200,120,0.4), rgba(30,140,80,0.55))';
+      btn.style.borderColor  = '#3cc878';
+      btn.style.color        = '#ccffdd';
+      btn.style.boxShadow    = '0 0 14px rgba(60,200,120,0.35)';
+    }
+  } else {
+    panel.classList.remove('visible');
+    if (btn) {
+      btn.style.background   = 'linear-gradient(180deg, rgba(60,200,120,0.1), rgba(30,140,80,0.2))';
+      btn.style.borderColor  = 'rgba(60,200,120,0.3)';
+      btn.style.color        = '#70dd99';
+      btn.style.boxShadow    = '';
+    }
+  }
+}
+
+function drawRawStream() {
+  // Mirror the offscreen-c canvas (full-color MJPEG source frame,
+  // contrast/brightness/saturation applied, before C64 color quantization)
+  const src = document.getElementById('offscreen-c');
+  const dst = document.getElementById('raw-stream-c');
+  if (!src || !dst) return;
+  const dctx = dst.getContext('2d');
+  // Scale source (160 or 320 × 200) to fill 320×200 destination
+  dctx.imageSmoothingEnabled = false;
+  dctx.drawImage(src, 0, 0, dst.width, dst.height);
+}
+
 async function upd() {
   try {
     const srP = apiFetch('/stats?t=' + Date.now()), rP = apiFetch('/data?t=' + Date.now()); const [sr, r] = await Promise.all([srP, rP]);
@@ -1876,6 +1914,7 @@ async function upd() {
       else if (isFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[17000]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let row = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = row * 40 + x, byte = d[cI * 8 + py], sBy = d[8000 + sB + cI], cBy = d[16000 + cI], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else if (isHires) { const img = ctx.createImageData(320, 200); for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, byte = d[cI * 8 + py], sBy = d[8000 + cI], fg = c64Pal[sBy >> 4], bg = c64Pal[sBy & 15]; for (let bit = 7; bit >= 0; bit--) { let px = x * 8 + (7 - bit), isF = (byte >> bit) & 1, c = isF ? fg : bg, o = (y * 320 + px) * 4; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else { const img = ctx.createImageData(160, 200), bg = c64Pal[currentBgColor]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cellIdx = cR * 40 + x, byte = d[cellIdx * 8 + py], sBy = d[8000 + cellIdx], cBy = d[9000 + cellIdx], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
+      if (showRawStream) drawRawStream();
     }  } catch (e) { }
   if (running) setTimeout(upd, 70);
 }
@@ -1885,8 +1924,25 @@ document.getElementById('btn-backend-pc')?.addEventListener('click', () => setBa
 
 setBackendMode('pc'); updateModeUI(); updateButtonStates(); upd();
 
-// Add fullscreen double-click handler for canvas wrapper
+// Add fullscreen double-click handler for C64 canvas wrapper
 document.getElementById('c-wrap').addEventListener('dblclick', function() {
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    if (this.requestFullscreen) {
+      this.requestFullscreen().catch(e => void 0);
+    } else if (this.webkitRequestFullscreen) {
+      this.webkitRequestFullscreen();
+    }
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  }
+});
+
+// Add fullscreen double-click handler for raw source stream wrapper (same behavior)
+document.getElementById('raw-wrap').addEventListener('dblclick', function() {
   if (!document.fullscreenElement && !document.webkitFullscreenElement) {
     if (this.requestFullscreen) {
       this.requestFullscreen().catch(e => void 0);
