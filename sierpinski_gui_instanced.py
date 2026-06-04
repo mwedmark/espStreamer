@@ -28,7 +28,7 @@ except ImportError:
 
 class SierpinskiPhysicsPiece:
     """Represents a component tetrahedron in the physics simulation."""
-    def __init__(self, pos, vel, color, rot_axis, rot_vel, radius, reflectiveness=0.35):
+    def __init__(self, pos, vel, color, rot_axis, rot_vel, radius):
         self.pos = list(pos)
         self.vel = list(vel)
         self.color = color
@@ -36,7 +36,6 @@ class SierpinskiPhysicsPiece:
         self.rot_angle = 0.0
         self.rot_vel = rot_vel
         self.radius = radius
-        self.reflectiveness = reflectiveness
 
 
 class SierpinskiTriangleApp:
@@ -96,19 +95,6 @@ class SierpinskiTriangleApp:
         self.full_button = None
         self.clear_button = None
         self.iter_slider = None
-        self.raytrace_falling = False
-        
-        # Color and reflectiveness properties
-        self.hover_color = [1.0, 1.0, 1.0]
-        self.hover_reflectiveness = 0.35
-        self.floor_reflectivity = 0.35
-        self.randomize_hover_settings()
-        
-    def randomize_hover_settings(self):
-        """Randomize hover color and reflectivity settings for visual variety."""
-        self.hover_color = [random.uniform(0.2, 1.0), random.uniform(0.2, 1.0), random.uniform(0.2, 1.0)]
-        self.hover_reflectiveness = random.uniform(0.20, 0.80)
-        self.floor_reflectivity = random.uniform(0.15, 0.75)
         
     def init_cuda_kernels(self):
         """Compile CUDA raw kernels for physics using CuPy."""
@@ -246,12 +232,10 @@ class SierpinskiTriangleApp:
         attribute vec3 i_rot_axis;
         attribute float i_rot_angle;
         attribute vec3 i_color;
-        attribute float i_reflectiveness;
         
         varying vec3 v_normal;
         varying vec3 v_color;
         varying vec3 v_view_dir;
-        varying float v_reflectiveness;
         
         uniform float u_scale;
         
@@ -276,7 +260,6 @@ class SierpinskiTriangleApp:
             gl_Position = gl_ModelViewProjectionMatrix * vec4(world_pos, 1.0);
             v_normal = normalize(gl_NormalMatrix * rot_normal);
             v_color = i_color;
-            v_reflectiveness = i_reflectiveness;
             
             vec3 eye_pos = (gl_ModelViewMatrix * vec4(world_pos, 1.0)).xyz;
             v_view_dir = normalize(-eye_pos);
@@ -288,7 +271,6 @@ class SierpinskiTriangleApp:
         varying vec3 v_normal;
         varying vec3 v_color;
         varying vec3 v_view_dir;
-        varying float v_reflectiveness;
         
         uniform bool u_is_shadow;
         
@@ -316,20 +298,12 @@ class SierpinskiTriangleApp:
                 vec3 lighting = ambient + diff1 * key_color + diff2 * fill_color + diff3 * rim_color;
                 vec3 final_color = v_color * lighting;
                 
-                // Environmental reflection simulation
-                vec3 ref = reflect(-view_dir, n);
-                vec3 env_color = mix(vec3(0.12, 0.16, 0.23), vec3(0.04, 0.05, 0.06), clamp(ref.y * 2.0 + 0.5, 0.0, 1.0));
-                env_color += vec3(1.8, 0.1, 1.0) * pow(max(0.0, dot(ref, normalize(vec3(0.0, 0.5, 1.5)))), 8.0) * 0.4;
-                
-                final_color = mix(final_color, env_color, v_reflectiveness * 0.6);
-                
                 // Glossy Specular highlights (Blinn-Phong)
                 vec3 half_dir1 = normalize(light_dir1 + view_dir);
                 vec3 half_dir3 = normalize(light_dir3 + view_dir);
                 float spec1 = pow(max(0.0, dot(n, half_dir1)), 64.0);
                 float spec3 = pow(max(0.0, dot(n, half_dir3)), 32.0);
-                float spec_boost = 1.0 + v_reflectiveness * 1.5;
-                final_color += vec3(1.0) * spec1 * 1.2 * spec_boost + rim_color * spec3 * 0.8 * spec_boost;
+                final_color += vec3(1.0) * spec1 * 1.2 + rim_color * spec3 * 0.8;
                 
                 gl_FragColor = vec4(final_color, 1.0);
             }
@@ -357,7 +331,6 @@ class SierpinskiTriangleApp:
         glBindAttribLocation(self.instanced_program, 3, "i_rot_axis")
         glBindAttribLocation(self.instanced_program, 4, "i_rot_angle")
         glBindAttribLocation(self.instanced_program, 5, "i_color")
-        glBindAttribLocation(self.instanced_program, 6, "i_reflectiveness")
         glLinkProgram(self.instanced_program)
         if not glGetProgramiv(self.instanced_program, GL_LINK_STATUS):
             raise RuntimeError(glGetProgramInfoLog(self.instanced_program).decode())
@@ -437,28 +410,24 @@ class SierpinskiTriangleApp:
         btn_y = ui_y_offset + (ui_height - int(30 * scale)) // 2
         
         # Iterations slider bounding box (scaled width and height)
-        self.iter_slider = pygame.Rect(int(80 * scale), btn_y, int(80 * scale), int(30 * scale))
+        self.iter_slider = pygame.Rect(int(100 * scale), btn_y, int(110 * scale), int(30 * scale))
         
         # Mode switch buttons (CPU / GPU)
         self.mode_buttons = {
-            'cpu': pygame.Rect(int(205 * scale), btn_y, int(35 * scale), int(30 * scale)),
-            'gpu': pygame.Rect(int(245 * scale), btn_y, int(35 * scale), int(30 * scale))
+            'cpu': pygame.Rect(int(220 * scale), btn_y, int(35 * scale), int(30 * scale)),
+            'gpu': pygame.Rect(int(260 * scale), btn_y, int(35 * scale), int(30 * scale))
         }
         
         # Rotate and Fullscreen buttons
-        self.rotate_button = pygame.Rect(int(290 * scale), btn_y, int(35 * scale), int(30 * scale))
-        self.full_button = pygame.Rect(int(330 * scale), btn_y, int(35 * scale), int(30 * scale))
+        self.rotate_button = pygame.Rect(int(305 * scale), btn_y, int(50 * scale), int(30 * scale))
+        self.full_button = pygame.Rect(int(360 * scale), btn_y, int(50 * scale), int(30 * scale))
         
-        # Raytraced Falling toggle button
-        self.rt_button = pygame.Rect(int(370 * scale), btn_y, int(30 * scale), int(30 * scale))
-        
-        # Color mode buttons (shifted and adjusted to accommodate the random button)
+        # Color mode buttons
         self.color_buttons = {
-            'rainbow': pygame.Rect(int(450 * scale), btn_y, int(60 * scale), int(30 * scale)),
-            'red': pygame.Rect(int(515 * scale), btn_y, int(30 * scale), int(30 * scale)),
-            'blue': pygame.Rect(int(550 * scale), btn_y, int(35 * scale), int(30 * scale)),
-            'white': pygame.Rect(int(590 * scale), btn_y, int(45 * scale), int(30 * scale)),
-            'random': pygame.Rect(int(640 * scale), btn_y, int(55 * scale), int(30 * scale)),
+            'rainbow': pygame.Rect(int(455 * scale), btn_y, int(60 * scale), int(30 * scale)),
+            'red': pygame.Rect(int(520 * scale), btn_y, int(35 * scale), int(30 * scale)),
+            'blue': pygame.Rect(int(560 * scale), btn_y, int(35 * scale), int(30 * scale)),
+            'white': pygame.Rect(int(600 * scale), btn_y, int(45 * scale), int(30 * scale)),
         }
         
         # Reset button (aligned to the right side of the screen)
@@ -555,36 +524,6 @@ class SierpinskiTriangleApp:
         """Handle color selection change."""
         self.color_mode = self.selected_color
         
-        # If currently falling, dynamically update the color of all active physics pieces
-        if self.simulation_state == 'falling':
-            if self.cupy_available:
-                import cupy as cp
-                N = len(self.gpu_pos_x)
-                color_init = np.zeros((N, 3), dtype=np.float32)
-                for idx in range(N):
-                    center = self.physics_centers[idx] if hasattr(self, 'physics_centers') and idx < len(self.physics_centers) else [0.0, 0.0, 0.0]
-                    colors = self.get_colors_for_face_3d_pos(center)
-                    color_init[idx] = self.parse_color_float(colors)
-                
-                self.gpu_color_r = cp.array(color_init[:, 0])
-                self.gpu_color_g = cp.array(color_init[:, 1])
-                self.gpu_color_b = cp.array(color_init[:, 2])
-                
-                self.gpu_instance_data[:, 7] = self.gpu_color_r
-                self.gpu_instance_data[:, 8] = self.gpu_color_g
-                self.gpu_instance_data[:, 9] = self.gpu_color_b
-                
-                # Upload the updated instance data to the VBO
-                cpu_data = self.gpu_instance_data.get()
-                glBindBuffer(GL_ARRAY_BUFFER, self.instance_vbo)
-                glBufferData(GL_ARRAY_BUFFER, cpu_data.nbytes, cpu_data, GL_STREAM_DRAW)
-                glBindBuffer(GL_ARRAY_BUFFER, 0)
-            else:
-                for idx, p in enumerate(self.physics_pieces):
-                    center = self.physics_centers[idx] if hasattr(self, 'physics_centers') and idx < len(self.physics_centers) else p.pos
-                    colors = self.get_colors_for_face_3d_pos(center)
-                    p.color = self.parse_color_float(colors)
-        
     def update_iterations(self, value):
         """Update iteration count from slider."""
         try:
@@ -641,43 +580,18 @@ class SierpinskiTriangleApp:
                     pygame.draw.polygon(self.screen, self.parse_color(c1), [v1, v2, v3])
             
         else:
-            # If in hover state, or in falling state with raytrace_falling active, render with fragment shader
-            if self.simulation_state == 'hover' or self.raytrace_falling:
+            if self.simulation_state == 'hover':
+                # Calculate 3D rotation matrix (orbiting yaw, with pitch constrained to upper hemisphere)
+                pitch = 15.0 + 10.0 * math.sin(self.hover_angle)
+                rot_matrix = self.get_rotation_matrix(self.rotation_angle, pitch)
+                
                 # GPU Mode: Raymarch using GLSL fragment shader
                 glClearColor(0.04, 0.05, 0.06, 1.0)
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
                 
+                # Draw using raymarching shader program
                 if self.shader_program is not None:
                     glUseProgram(self.shader_program)
-                    
-                    # 1. Compute view rotation matrix and camera target
-                    avg_x = 0.0
-                    avg_y = 0.0
-                    avg_z = 0.0
-                    if self.simulation_state == 'hover':
-                        pitch = 15.0 + 10.0 * math.sin(self.hover_angle)
-                        camera_target = [0.0, 0.0, 0.0]
-                    else:
-                        # Falling mode camera target matching rasterizer tracking
-                        if self.cupy_available:
-                            avg_x = float(self.gpu_pos_x.mean().get())
-                            avg_y = float(self.gpu_pos_y.mean().get())
-                            avg_z = float(self.gpu_pos_z.mean().get())
-                        else:
-                            if len(self.physics_pieces) > 0:
-                                avg_x = sum(p.pos[0] for p in self.physics_pieces) / len(self.physics_pieces)
-                                avg_y = sum(p.pos[1] for p in self.physics_pieces) / len(self.physics_pieces)
-                                avg_z = sum(p.pos[2] for p in self.physics_pieces) / len(self.physics_pieces)
-                        camera_target = [avg_x, avg_y - self.camera_offset_y, avg_z]
-                        
-                        # Match pitch clamp
-                        pitch = 15.0 + 10.0 * math.sin(self.hover_angle)
-                        min_sin_p = (-0.9 - camera_target[1]) / 5.0
-                        if min_sin_p > 0.0:
-                            min_pitch = math.degrees(math.asin(min(1.0, min_sin_p)))
-                            pitch = max(pitch, min_pitch)
-                            
-                    rot_matrix = self.get_rotation_matrix(self.rotation_angle, pitch)
                     
                     # Send uniforms
                     glUniform2f(self.u_resolution_loc, float(self.width), float(self.height))
@@ -688,73 +602,10 @@ class SierpinskiTriangleApp:
                     if self.color_mode == 'red': color_idx = 1
                     elif self.color_mode == 'blue': color_idx = 2
                     elif self.color_mode == 'white': color_idx = 3
-                    elif self.color_mode == 'random': color_idx = 4
                     glUniform1i(self.u_color_mode_loc, color_idx)
                     
                     hover_y = 0.45 + 0.18 * math.sin(self.hover_angle)
                     glUniform1f(self.u_hover_y_loc, hover_y)
-                    
-                    # Upload hover reflectiveness, floor reflectivity, and hover color
-                    glUniform1f(self.u_hover_reflectiveness_loc, float(self.hover_reflectiveness))
-                    glUniform1f(self.u_floor_reflectivity_loc, float(self.floor_reflectivity))
-                    glUniform3f(self.u_hover_color_loc, float(self.hover_color[0]), float(self.hover_color[1]), float(self.hover_color[2]))
-                    
-                    # Send simulation state: 0 = hover, 1 = falling
-                    state_val = 0 if self.simulation_state == 'hover' else 1
-                    glUniform1i(self.u_state_loc, state_val)
-                    glUniform3f(self.u_camera_target_loc, camera_target[0], camera_target[1], camera_target[2])
-                    
-                    # Upload active pieces positions and rotations to shader arrays when falling
-                    if state_val == 1:
-                        if self.cupy_available:
-                            N = len(self.gpu_pos_x)
-                            count = min(N, 128)
-                            
-                            pos_data = np.zeros((count, 3), dtype=np.float32)
-                            pos_data[:, 0] = self.gpu_pos_x[:count].get()
-                            pos_data[:, 1] = self.gpu_pos_y[:count].get()
-                            pos_data[:, 2] = self.gpu_pos_z[:count].get()
-                            
-                            rot_axis_data = np.zeros((count, 3), dtype=np.float32)
-                            rot_axis_data[:, 0] = self.gpu_rot_axis_x[:count].get()
-                            rot_axis_data[:, 1] = self.gpu_rot_axis_y[:count].get()
-                            rot_axis_data[:, 2] = self.gpu_rot_axis_z[:count].get()
-                            
-                            rot_angle_data = self.gpu_rot_angle[:count].get().astype(np.float32)
-                            
-                            color_data = np.zeros((count, 3), dtype=np.float32)
-                            color_data[:, 0] = self.gpu_color_r[:count].get()
-                            color_data[:, 1] = self.gpu_color_g[:count].get()
-                            color_data[:, 2] = self.gpu_color_b[:count].get()
-                            
-                            reflectiveness_data = self.gpu_reflectiveness[:count].get().astype(np.float32)
-                        else:
-                            count = min(len(self.physics_pieces), 128)
-                            pos_data = np.zeros((count, 3), dtype=np.float32)
-                            rot_axis_data = np.zeros((count, 3), dtype=np.float32)
-                            rot_angle_data = np.zeros(count, dtype=np.float32)
-                            color_data = np.zeros((count, 3), dtype=np.float32)
-                            reflectiveness_data = np.zeros(count, dtype=np.float32)
-                            
-                            for i in range(count):
-                                p = self.physics_pieces[i]
-                                pos_data[i] = p.pos
-                                rot_axis_data[i] = p.rot_axis
-                                rot_angle_data[i] = p.rot_angle
-                                color_data[i] = p.color
-                                reflectiveness_data[i] = p.reflectiveness
-                                
-                        glUniform3fv(self.u_piece_pos_loc, count, pos_data)
-                        glUniform3fv(self.u_piece_rot_axis_loc, count, rot_axis_data)
-                        glUniform1fv(self.u_piece_rot_angle_loc, count, rot_angle_data)
-                        glUniform3fv(self.u_piece_color_loc, count, color_data)
-                        glUniform1fv(self.u_piece_reflectiveness_loc, count, reflectiveness_data)
-                        glUniform1i(self.u_piece_count_loc, count)
-                        glUniform1f(self.u_piece_scale_loc, float(self.physics_piece_scale))
-                    else:
-                        # Hover state defaults
-                        glUniform1i(self.u_piece_count_loc, 0)
-                        glUniform1f(self.u_piece_scale_loc, 1.0)
                     
                     # Render fullscreen quad
                     glBegin(GL_QUADS)
@@ -830,7 +681,7 @@ class SierpinskiTriangleApp:
         
         # 4. Draw Mode Switch Buttons (CPU / GPU)
         mode_label = self.font.render("Mode:", True, (243, 244, 246))
-        surf.blit(mode_label, (int(165 * scale), ui_y_offset + int(22 * scale)))
+        surf.blit(mode_label, (int(215 * scale), ui_y_offset + int(22 * scale)))
         
         for mode_name, rect in self.mode_buttons.items():
             is_selected = (self.render_mode == mode_name)
@@ -896,33 +747,9 @@ class SierpinskiTriangleApp:
         full_text = self.font.render("Full", True, full_text_col)
         surf.blit(full_text, full_text.get_rect(center=self.full_button.center))
         
-        # 6b. Draw Raytraced Falling (RT) Toggle Button
-        is_rt_hovered = self.rt_button.collidepoint(mouse_pos)
-        is_rt_disabled = (self.render_mode == 'cpu' or not self.opengl_available)
-        
-        if is_rt_disabled:
-            rt_bg = (25, 25, 30)
-            rt_text_col = (75, 75, 85)
-        elif self.raytrace_falling:
-            rt_bg = (124, 58, 237)       # Violet-600 when active
-            rt_text_col = (255, 255, 255)
-        else:
-            rt_bg = (55, 65, 81) if is_rt_hovered else (31, 41, 55)
-            rt_text_col = (243, 244, 246) if is_rt_hovered else (156, 163, 175)
-            
-        pygame.draw.rect(surf, rt_bg, self.rt_button, border_radius=6)
-        
-        if is_rt_disabled:
-            pygame.draw.rect(surf, (40, 40, 45), self.rt_button, width=1, border_radius=6)
-        else:
-            pygame.draw.rect(surf, (255, 255, 255) if self.raytrace_falling else (75, 85, 99), self.rt_button, width=1 if not self.raytrace_falling else 2, border_radius=6)
-            
-        rt_text = self.font.render("RT", True, rt_text_col)
-        surf.blit(rt_text, rt_text.get_rect(center=self.rt_button.center))
-        
         # 7. Draw Color Buttons
         color_label = self.font.render("Color:", True, (243, 244, 246))
-        surf.blit(color_label, (int(410 * scale), ui_y_offset + int(22 * scale)))
+        surf.blit(color_label, (int(415 * scale), ui_y_offset + int(22 * scale)))
         
         for color_name, rect in self.color_buttons.items():
             is_selected = (self.selected_color == color_name)
@@ -935,8 +762,6 @@ class SierpinskiTriangleApp:
                     bg_color = (220, 38, 38)   # Red-600
                 elif color_name == 'blue':
                     bg_color = (37, 99, 235)   # Blue-600
-                elif color_name == 'random':
-                    bg_color = (13, 148, 136)  # Teal-600
                 else:  # white
                     bg_color = (243, 244, 246) # Gray-100
                 text_color = (17, 24, 39) if color_name == 'white' else (255, 255, 255)
@@ -1080,6 +905,9 @@ class SierpinskiTriangleApp:
         v2 = (-1.0, 1.0, 1.0)
         v3 = (-1.0, -1.0, -1.0)
         
+        glBegin(GL_TRIANGLES)
+        glVertex3f(*v0); glVertex3f(*v2); glVertex3f(*v1)
+        glVertex3f(*v0); glVertex3f(*v3); glVertex3f(*v2)
         glVertex3f(*v0); glVertex3f(*v1); glVertex3f(*v3)
         glVertex3f(*v1); glVertex3f(*v2); glVertex3f(*v3)
         glEnd()
@@ -1101,34 +929,6 @@ class SierpinskiTriangleApp:
         uniform int u_color_mode;
         uniform float u_hover_y;
         
-        // Raytraced Falling Uniforms
-        uniform vec3 u_piece_pos[128];
-        uniform vec3 u_piece_rot_axis[128];
-        uniform float u_piece_rot_angle[128];
-        uniform vec3 u_piece_color[128];
-        uniform float u_piece_reflectiveness[128];
-        uniform float u_floor_reflectivity;
-        uniform float u_hover_reflectiveness;
-        uniform vec3 u_hover_color;
-        uniform int u_piece_count;
-        uniform float u_piece_scale;
-        uniform int u_state; // 0 = hover, 1 = falling
-        uniform vec3 u_camera_target;
-        
-        vec3 rotate_vector_inverse(vec3 v, vec3 axis, float angle) {
-            float rad = radians(-angle);
-            float c = cos(rad);
-            float s = sin(rad);
-            float t = 1.0 - c;
-            vec3 a = normalize(axis);
-            mat3 rot = mat3(
-                t * a.x * a.x + c,       t * a.x * a.y + s * a.z, t * a.x * a.z - s * a.y,
-                t * a.x * a.y - s * a.z, t * a.y * a.y + c,       t * a.y * a.z + s * a.x,
-                t * a.x * a.z + s * a.y, t * a.y * a.z - s * a.x, t * a.z * a.z + c
-            );
-            return rot * v;
-        }
-        
         float deSierpinski(vec3 p, int iterations) {
             float scale = 2.0;
             float offset = 1.3;
@@ -1145,29 +945,11 @@ class SierpinskiTriangleApp:
         
         vec2 map(vec3 p) {
             float d_plane = p.y - (-1.2);
-            float d_tet = 1e10;
-            float hit_id = 2.0; // 2.0 default color
-            
-            if (u_state == 0) {
-                d_tet = deSierpinski(p - vec3(0.0, u_hover_y, 0.0), u_iterations);
-            } else {
-                for (int i = 0; i < u_piece_count; i++) {
-                    float d_bound = distance(p, u_piece_pos[i]) - u_piece_scale * 2.3;
-                    if (d_bound < d_tet) {
-                        vec3 local_p = rotate_vector_inverse((p - u_piece_pos[i]) / u_piece_scale, u_piece_rot_axis[i], u_piece_rot_angle[i]);
-                        float d = deSierpinski(local_p, 0) * u_piece_scale;
-                        if (d < d_tet) {
-                            d_tet = d;
-                            hit_id = 3.0 + float(i);
-                        }
-                    }
-                }
-            }
-            
+            float d_tet = deSierpinski(p - vec3(0.0, u_hover_y, 0.0), u_iterations);
             if (d_plane < d_tet) {
                 return vec2(d_plane, 1.0);
             } else {
-                return vec2(d_tet, hit_id);
+                return vec2(d_tet, 2.0);
             }
         }
         
@@ -1215,10 +997,8 @@ class SierpinskiTriangleApp:
                 return vec3(0.937, 0.267, 0.267);
             } else if (u_color_mode == 2) {
                 return vec3(0.231, 0.510, 0.965);
-            } else if (u_color_mode == 3) {
-                return vec3(0.953, 0.957, 0.965);
             } else {
-                return u_hover_color;
+                return vec3(0.953, 0.957, 0.965);
             }
         }
         
@@ -1241,7 +1021,7 @@ class SierpinskiTriangleApp:
             return ro + rd * t;
         }
         
-        vec3 shadeReflected(vec3 p, vec3 rd, vec2 hit) {
+        vec3 shade(vec3 p, vec3 rd, vec2 hit) {
             if (hit.y == 0.0) {
                 return vec3(0.04, 0.05, 0.06);
             }
@@ -1249,15 +1029,8 @@ class SierpinskiTriangleApp:
             vec3 col = vec3(0.0);
             if (hit.y == 1.0) {
                 col = getPlaneColor(p);
-            } else if (hit.y == 2.0) {
-                col = getTetrahedronColor(p);
             } else {
-                int idx = int(hit.y - 3.0);
-                if (idx >= 0 && idx < 128) {
-                    col = u_piece_color[idx];
-                } else {
-                    col = vec3(1.0);
-                }
+                col = getTetrahedronColor(p);
             }
             
             // 3-Point Colored Lighting Setup
@@ -1280,8 +1053,8 @@ class SierpinskiTriangleApp:
             vec3 lighting = ambient + (diff1 * key_color * sh) + (diff2 * fill_color + diff3 * rim_color) * (0.15 + 0.85 * sh);
             vec3 final_color = col * lighting;
             
-            // Specular highlight for tetrahedron and falling pieces
-            if (hit.y >= 2.0) {
+            // Specular highlight for tetrahedron
+            if (hit.y == 2.0) {
                 vec3 ref = reflect(rd, n);
                 float spec1 = pow(max(0.0, dot(ref, light_dir1)), 64.0); // sharp specular key
                 float spec3 = pow(max(0.0, dot(ref, light_dir3)), 32.0); // rim specular
@@ -1292,74 +1065,6 @@ class SierpinskiTriangleApp:
             return mix(vec3(0.04, 0.05, 0.06), final_color, fog);
         }
         
-        vec3 shade(vec3 p, vec3 rd, vec2 hit) {
-            if (hit.y == 0.0) {
-                return vec3(0.04, 0.05, 0.06);
-            }
-            vec3 n = getNormal(p);
-            vec3 col = vec3(0.0);
-            
-            // 3-Point Colored Lighting Setup
-            vec3 light_dir1 = normalize(vec3(1.0, 1.5, -1.0)); // Key light (warm white)
-            vec3 light_dir2 = normalize(vec3(-1.5, 0.2, 0.5)); // Fill light (cool blue)
-            vec3 light_dir3 = normalize(vec3(0.0, 0.5, 1.5));  // Rim light (magenta / pink)
-            
-            float diff1 = max(0.0, dot(n, light_dir1));
-            float diff2 = max(0.0, dot(n, light_dir2));
-            float diff3 = max(0.0, dot(n, light_dir3));
-            
-            float sh = shadow(p + n * 0.005, light_dir1, 0.01, 6.0, 12.0);
-            
-            vec3 ambient = vec3(0.002, 0.002, 0.002); // Very low ambient
-            vec3 key_color = vec3(1.6, 1.45, 1.2);   // Intense key light
-            vec3 fill_color = vec3(0.1, 0.65, 1.8);  // Saturated blue fill
-            vec3 rim_color = vec3(1.8, 0.1, 1.0);    // Sharp magenta rim
-            
-            vec3 lighting = ambient + (diff1 * key_color * sh) + (diff2 * fill_color + diff3 * rim_color) * (0.15 + 0.85 * sh);
-            
-            float reflectivity = 0.0;
-            if (hit.y == 1.0) {
-                reflectivity = u_floor_reflectivity;
-                col = getPlaneColor(p);
-            } else if (hit.y == 2.0) {
-                reflectivity = u_hover_reflectiveness;
-                col = getTetrahedronColor(p);
-            } else {
-                int idx = int(hit.y - 3.0);
-                if (idx >= 0 && idx < 128) {
-                    reflectivity = u_piece_reflectiveness[idx];
-                    col = u_piece_color[idx];
-                } else {
-                    col = vec3(1.0);
-                }
-            }
-            
-            vec3 base_lit = col * lighting;
-            
-            if (reflectivity > 0.0) {
-                // Compute reflection ray
-                vec3 ref_rd = reflect(rd, n);
-                vec3 ref_ro = p + n * 0.005;
-                vec2 ref_hit;
-                vec3 ref_p = raymarch(ref_ro, ref_rd, ref_hit);
-                vec3 reflected_col = shadeReflected(ref_p, ref_rd, ref_hit);
-                
-                base_lit = mix(base_lit, reflected_col, reflectivity);
-            }
-            
-            // Specular highlight for tetrahedron and falling pieces
-            if (hit.y >= 2.0) {
-                vec3 ref = reflect(rd, n);
-                float spec1 = pow(max(0.0, dot(ref, light_dir1)), 64.0); // sharp specular key
-                float spec3 = pow(max(0.0, dot(ref, light_dir3)), 32.0); // rim specular
-                float spec_boost = 1.0 + reflectivity * 1.5;
-                base_lit += vec3(1.0) * spec1 * sh * 1.2 * spec_boost + rim_color * spec3 * 0.8 * spec_boost;
-            }
-            
-            float fog = exp(-0.15 * hit.x);
-            return mix(vec3(0.04, 0.05, 0.06), base_lit, fog);
-        }
-        
         void main() {
             vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
             vec3 ro = vec3(0.0, 0.0, -5.0);
@@ -1368,9 +1073,6 @@ class SierpinskiTriangleApp:
             // Rotate camera view
             ro = u_rotation * ro;
             rd = u_rotation * rd;
-            
-            // Translate camera target
-            ro += u_camera_target;
             
             vec2 hit;
             vec3 p = raymarch(ro, rd, hit);
@@ -1404,20 +1106,6 @@ class SierpinskiTriangleApp:
         self.u_iterations_loc = glGetUniformLocation(self.shader_program, "u_iterations")
         self.u_color_mode_loc = glGetUniformLocation(self.shader_program, "u_color_mode")
         self.u_hover_y_loc = glGetUniformLocation(self.shader_program, "u_hover_y")
-        
-        # Raytraced Falling Uniform Bindings
-        self.u_state_loc = glGetUniformLocation(self.shader_program, "u_state")
-        self.u_camera_target_loc = glGetUniformLocation(self.shader_program, "u_camera_target")
-        self.u_piece_pos_loc = glGetUniformLocation(self.shader_program, "u_piece_pos")
-        self.u_piece_rot_axis_loc = glGetUniformLocation(self.shader_program, "u_piece_rot_axis")
-        self.u_piece_rot_angle_loc = glGetUniformLocation(self.shader_program, "u_piece_rot_angle")
-        self.u_piece_color_loc = glGetUniformLocation(self.shader_program, "u_piece_color")
-        self.u_piece_count_loc = glGetUniformLocation(self.shader_program, "u_piece_count")
-        self.u_piece_scale_loc = glGetUniformLocation(self.shader_program, "u_piece_scale")
-        self.u_piece_reflectiveness_loc = glGetUniformLocation(self.shader_program, "u_piece_reflectiveness")
-        self.u_floor_reflectivity_loc = glGetUniformLocation(self.shader_program, "u_floor_reflectivity")
-        self.u_hover_reflectiveness_loc = glGetUniformLocation(self.shader_program, "u_hover_reflectiveness")
-        self.u_hover_color_loc = glGetUniformLocation(self.shader_program, "u_hover_color")
 
     def get_rotation_matrix(self, yaw_degrees, pitch_degrees):
         """Construct a 3D rotation matrix for yaw (around Y) and pitch (around X) to keep camera above the floor."""
@@ -1541,80 +1229,10 @@ class SierpinskiTriangleApp:
         glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (1.0, 1.0, 1.0, 1.0))
         glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 64.0)
         
-        # 4. Draw the mirrored pieces (reflection)
-        glPushMatrix()
-        glTranslatef(0.0, -2.4, 0.0)
-        glScalef(1.0, -1.0, 1.0)
-        glFrontFace(GL_CW)
+        # 4. Draw the checkered plane
+        self.draw_checkered_plane_poly()
         
-        if self.cupy_available:
-            glBindVertexArray(self.vao)
-            glUseProgram(self.instanced_program)
-            glUniform1f(self.u_scale_loc, self.physics_piece_scale)
-            
-            # Setup Vertex Attributes
-            glBindBuffer(GL_ARRAY_BUFFER, self.geom_vbo)
-            glEnableVertexAttribArray(0)
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, ctypes.c_void_p(0))
-            glEnableVertexAttribArray(1)
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 24, ctypes.c_void_p(12))
-            
-            glBindBuffer(GL_ARRAY_BUFFER, self.instance_vbo)
-            glEnableVertexAttribArray(2)
-            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(0))
-            glVertexAttribDivisor(2, 1)
-            glEnableVertexAttribArray(3)
-            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(12))
-            glVertexAttribDivisor(3, 1)
-            glEnableVertexAttribArray(4)
-            glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(24))
-            glVertexAttribDivisor(4, 1)
-            glEnableVertexAttribArray(5)
-            glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(28))
-            glVertexAttribDivisor(5, 1)
-            glEnableVertexAttribArray(6)
-            glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(40))
-            glVertexAttribDivisor(6, 1)
-            
-            glUniform1i(self.u_is_shadow_loc, 0)
-            glDrawArraysInstanced(GL_TRIANGLES, 0, 12, len(self.gpu_pos_x))
-            
-            glDisableVertexAttribArray(0)
-            glDisableVertexAttribArray(1)
-            glDisableVertexAttribArray(2)
-            glDisableVertexAttribArray(3)
-            glDisableVertexAttribArray(4)
-            glDisableVertexAttribArray(5)
-            glDisableVertexAttribArray(6)
-            glVertexAttribDivisor(2, 0)
-            glVertexAttribDivisor(3, 0)
-            glVertexAttribDivisor(4, 0)
-            glVertexAttribDivisor(5, 0)
-            glVertexAttribDivisor(6, 0)
-            glBindBuffer(GL_ARRAY_BUFFER, 0)
-            glBindVertexArray(0)
-            glUseProgram(0)
-        else:
-            for p in self.physics_pieces:
-                glPushMatrix()
-                glTranslatef(p.pos[0], p.pos[1], p.pos[2])
-                glRotatef(p.rot_angle, p.rot_axis[0], p.rot_axis[1], p.rot_axis[2])
-                glScalef(self.physics_piece_scale, self.physics_piece_scale, self.physics_piece_scale)
-                glColor3f(p.color[0], p.color[1], p.color[2])
-                glMaterialfv(GL_FRONT, GL_SPECULAR, (p.reflectiveness, p.reflectiveness, p.reflectiveness, 1.0))
-                glMaterialf(GL_FRONT, GL_SHININESS, 32.0 + p.reflectiveness * 96.0)
-                glCallList(self.lit_list)
-                glPopMatrix()
-            glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (1.0, 1.0, 1.0, 1.0))
-            glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 64.0)
-                
-        glFrontFace(GL_CCW)
-        glPopMatrix()
-        
-        # 5. Draw the checkered plane (semi-transparent with alpha = 1.0 - floor_reflectivity to blend reflection)
-        self.draw_checkered_plane_poly(alpha=max(0.2, 1.0 - self.floor_reflectivity))
-        
-        # 6. Render projected shadows for each piece
+        # 5. Render projected shadows for each piece
         shadow_y = -1.19
         lx, ly, lz = 1.0, 1.5, -1.0
         len_l = math.sqrt(lx**2 + ly**2 + lz**2)
@@ -1641,20 +1259,17 @@ class SierpinskiTriangleApp:
             
             glBindBuffer(GL_ARRAY_BUFFER, self.instance_vbo)
             glEnableVertexAttribArray(2)
-            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(0))
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 40, ctypes.c_void_p(0))
             glVertexAttribDivisor(2, 1)
             glEnableVertexAttribArray(3)
-            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(12))
+            glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 40, ctypes.c_void_p(12))
             glVertexAttribDivisor(3, 1)
             glEnableVertexAttribArray(4)
-            glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(24))
+            glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, 40, ctypes.c_void_p(24))
             glVertexAttribDivisor(4, 1)
             glEnableVertexAttribArray(5)
-            glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(28))
+            glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, 40, ctypes.c_void_p(28))
             glVertexAttribDivisor(5, 1)
-            glEnableVertexAttribArray(6)
-            glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, 44, ctypes.c_void_p(40))
-            glVertexAttribDivisor(6, 1)
             
             # Render shadows
             glPushMatrix()
@@ -1682,12 +1297,10 @@ class SierpinskiTriangleApp:
             glDisableVertexAttribArray(3)
             glDisableVertexAttribArray(4)
             glDisableVertexAttribArray(5)
-            glDisableVertexAttribArray(6)
             glVertexAttribDivisor(2, 0)
             glVertexAttribDivisor(3, 0)
             glVertexAttribDivisor(4, 0)
             glVertexAttribDivisor(5, 0)
-            glVertexAttribDivisor(6, 0)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
             glBindVertexArray(0)
             glUseProgram(0)
@@ -1711,28 +1324,22 @@ class SierpinskiTriangleApp:
             glDisable(GL_BLEND)
             glEnable(GL_LIGHTING)
             
-            # 7. Render the real physical pieces
+            # 6. Render the real physical pieces
             for p in self.physics_pieces:
                 glPushMatrix()
                 glTranslatef(p.pos[0], p.pos[1], p.pos[2])
                 glRotatef(p.rot_angle, p.rot_axis[0], p.rot_axis[1], p.rot_axis[2])
                 glScalef(self.physics_piece_scale, self.physics_piece_scale, self.physics_piece_scale)
                 glColor3f(p.color[0], p.color[1], p.color[2])
-                glMaterialfv(GL_FRONT, GL_SPECULAR, (p.reflectiveness, p.reflectiveness, p.reflectiveness, 1.0))
-                glMaterialf(GL_FRONT, GL_SHININESS, 32.0 + p.reflectiveness * 96.0)
                 glCallList(self.lit_list)
                 glPopMatrix()
-            glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (1.0, 1.0, 1.0, 1.0))
-            glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 64.0)
             
         # Restore state
         glDisable(GL_DEPTH_TEST)
         glDisable(GL_LIGHTING)
 
-    def draw_checkered_plane_poly(self, alpha=0.65):
+    def draw_checkered_plane_poly(self):
         """Draw checkered plane matching the raymarching coordinates."""
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glBegin(GL_QUADS)
         glNormal3f(0.0, 1.0, 0.0)
         
@@ -1749,16 +1356,15 @@ class SierpinskiTriangleApp:
                 z2 = z1 + square_size
                 
                 if (i + j) % 2 == 0:
-                    glColor4f(0.12, 0.16, 0.23, alpha)
+                    glColor3f(0.12, 0.16, 0.23)
                 else:
-                    glColor4f(0.20, 0.25, 0.33, alpha)
+                    glColor3f(0.20, 0.25, 0.33)
                     
                 glVertex3f(x1, plane_y, z1)
                 glVertex3f(x1, plane_y, z2)
                 glVertex3f(x2, plane_y, z2)
                 glVertex3f(x2, plane_y, z1)
         glEnd()
-        glDisable(GL_BLEND)
 
     def draw_unit_tetrahedron_flat(self):
         """Draw a flat unit tetrahedron for shadow casting."""
@@ -1839,7 +1445,6 @@ class SierpinskiTriangleApp:
         v3 = (-size, -size, -size)
         
         centers = self.get_sub_tetrahedrons(v0, v1, v2, v3, sim_depth)
-        self.physics_centers = centers
         
         pitch = 15.0 + 10.0 * math.sin(self.hover_angle)
         rot_matrix = self.get_rotation_matrix(self.rotation_angle, pitch)
@@ -1859,7 +1464,6 @@ class SierpinskiTriangleApp:
             rot_axis_init = np.zeros((N, 3), dtype=np.float32)
             rot_vel_init = np.zeros(N, dtype=np.float32)
             rot_angle_init = np.zeros(N, dtype=np.float32)
-            reflectiveness_init = np.zeros(N, dtype=np.float32)
             
             omega = math.radians(1.0)
             for idx, center in enumerate(centers):
@@ -1888,7 +1492,6 @@ class SierpinskiTriangleApp:
                 rot_axis_init[idx] = rot_axis
                 
                 rot_vel_init[idx] = 180.0 + random.random() * 360.0
-                reflectiveness_init[idx] = random.uniform(0.05, 0.85)
                 
             self.gpu_pos_x = cp.array(pos_init[:, 0])
             self.gpu_pos_y = cp.array(pos_init[:, 1])
@@ -1908,9 +1511,8 @@ class SierpinskiTriangleApp:
             
             self.gpu_rot_vel = cp.array(rot_vel_init)
             self.gpu_rot_angle = cp.array(rot_angle_init)
-            self.gpu_reflectiveness = cp.array(reflectiveness_init)
             
-            self.gpu_instance_data = cp.zeros((N, 11), dtype=cp.float32)
+            self.gpu_instance_data = cp.zeros((N, 10), dtype=cp.float32)
             self.gpu_instance_data[:, 0] = self.gpu_pos_x
             self.gpu_instance_data[:, 1] = self.gpu_pos_y
             self.gpu_instance_data[:, 2] = self.gpu_pos_z
@@ -1921,7 +1523,6 @@ class SierpinskiTriangleApp:
             self.gpu_instance_data[:, 7] = self.gpu_color_r
             self.gpu_instance_data[:, 8] = self.gpu_color_g
             self.gpu_instance_data[:, 9] = self.gpu_color_b
-            self.gpu_instance_data[:, 10] = self.gpu_reflectiveness
             
             # Upload initial data to VBO so it's allocated on the very first draw call
             cpu_data = self.gpu_instance_data.get()
@@ -1959,10 +1560,9 @@ class SierpinskiTriangleApp:
                 if l > 0:
                     rot_axis = [rot_axis[0]/l, rot_axis[1]/l, rot_axis[2]/l]
                 rot_vel = 180.0 + random.random() * 360.0
-                reflectiveness = random.uniform(0.05, 0.85)
                 
                 self.physics_pieces.append(
-                    SierpinskiPhysicsPiece(pos, [vx, vy, vz], rgb_color, rot_axis, rot_vel, radius, reflectiveness)
+                    SierpinskiPhysicsPiece(pos, [vx, vy, vz], rgb_color, rot_axis, rot_vel, radius)
                 )
                 
             self.simulation_state = 'falling'
@@ -1986,11 +1586,6 @@ class SierpinskiTriangleApp:
             return '#ef4444'
         elif self.color_mode == 'blue':
             return '#3b82f6'
-        elif self.color_mode == 'random':
-            r = random.randint(30, 255)
-            g = random.randint(30, 255)
-            b = random.randint(30, 255)
-            return f'#{r:02x}{g:02x}{b:02x}'
         else:
             return '#f3f4f6'
 
@@ -2263,12 +1858,6 @@ class SierpinskiTriangleApp:
             return ['#ef4444', '#ef4444', '#ef4444']
         elif self.color_mode == 'blue':
             return ['#3b82f6', '#3b82f6', '#3b82f6']
-        elif self.color_mode == 'random':
-            r = random.randint(30, 255)
-            g = random.randint(30, 255)
-            b = random.randint(30, 255)
-            col = f'#{r:02x}{g:02x}{b:02x}'
-            return [col, col, col]
         else:  # white
             return ['#f3f4f6', '#f3f4f6', '#f3f4f6']
 
@@ -2324,7 +1913,6 @@ def main():
                     app.hover_frames = 0
                     app.stable_frames = 0
                     app.physics_pieces = []
-                    app.randomize_hover_settings()
             
         for event in pygame.event.get():
             if event.type == QUIT:
@@ -2373,21 +1961,17 @@ def main():
                     if rect.collidepoint(event.pos):
                         app.set_render_mode(mode)
                         
-                # 2. Check rotate, fullscreen, and RT buttons
+                # 2. Check rotate and fullscreen buttons
                 if app.rotate_button.collidepoint(event.pos):
                     app.auto_rotate = not app.auto_rotate
                 elif app.full_button.collidepoint(event.pos):
                     app.toggle_fullscreen()
-                elif app.rt_button.collidepoint(event.pos) and app.render_mode == 'gpu':
-                    app.raytrace_falling = not app.raytrace_falling
                     
                 # 3. Check color buttons
                 for color, rect in app.color_buttons.items():
                     if rect.collidepoint(event.pos):
                         app.selected_color = color
                         app.on_color_change()
-                        if color == 'random':
-                            app.randomize_hover_settings()
                         
                 # 4. Check reset button
                 if app.clear_button.collidepoint(event.pos):
@@ -2400,8 +1984,6 @@ def main():
                     app.hover_frames = 0
                     app.stable_frames = 0
                     app.physics_pieces = []
-                    app.raytrace_falling = False
-                    app.randomize_hover_settings()
                     
                 # 5. Check slider
                 elif app.iter_slider.collidepoint(event.pos):
