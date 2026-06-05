@@ -87,17 +87,17 @@ volatile uint32_t nonZeroPixels = 0;
 volatile uint64_t totalBytes = 0;
 
 // --- Image Adjustments ---
-float imgContrast = 1.0f;
-int16_t contrast_fp = 256;
-float imgBrightness = 0.0f;
-int16_t brightness_val = 0;
-float imgSaturation = 1.0f;
-int16_t saturation_fp = 256;
+float imgContrast = 1.5f;
+int16_t contrast_fp = 384;
+float imgBrightness = 20.0f;
+int16_t brightness_val = 20;
+float imgSaturation = 1.4f;
+int16_t saturation_fp = 358;
 uint8_t jpgScale = 1;
 uint8_t scalingMode = 0;   // 0=Stretch, 1=Fit (letterbox), 2=Crop (zoom)
 volatile uint8_t limitX = 100;
 volatile uint8_t limitY = 100;
-uint8_t ditherStrength = 4;  // Dither intensity: 0=off, 1-8
+uint8_t ditherStrength = 2;  // Dither intensity: 0=off, 1-8
 uint8_t ditherAlgo = 2;      // 0=None, 1=Bayer4x4, 2=Bayer8x8, 3=WhiteNoise, 4=BlueNoise, 5=FloydSteinberg
 uint8_t globalBgColor = 0;   // User-selected background color
 uint16_t currentJpgWidth = 320;
@@ -1110,12 +1110,12 @@ void old_handleRoot_to_delete() {
     <button onclick="save('CRT')">&#x25B6; CRT</button>
   </div>
   <div class="slider-container">
-    <span>CT: <span id="cval" class="val">1.0</span></span>
-    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.0" oninput="updateContrastText()" onchange="sendContrast()">
-    <span>BR: <span id="bval" class="val">0</span></span>
-    <input type="range" id="brightness" min="-128" max="128" step="4" value="0" oninput="updateBrightnessText()" onchange="sendBrightness()">
-    <span>SAT: <span id="sval" class="val">1.0</span></span>
-    <input type="range" id="saturation" min="0.0" max="2.0" step="0.1" value="1.0" oninput="updateSaturationText()" onchange="sendSaturation()">
+    <span>CT: <span id="cval" class="val">1.5</span></span>
+    <input type="range" id="contrast" min="0.5" max="3.0" step="0.1" value="1.5" oninput="updateContrastText()" onchange="sendContrast()">
+    <span>BR: <span id="bval" class="val">20</span></span>
+    <input type="range" id="brightness" min="-128" max="128" step="4" value="20" oninput="updateBrightnessText()" onchange="sendBrightness()">
+    <span>SAT: <span id="sval" class="val">1.4</span></span>
+    <input type="range" id="saturation" min="0.0" max="2.0" step="0.1" value="1.4" oninput="updateSaturationText()" onchange="sendSaturation()">
     <span style="margin-left:4px">SCALE:</span>
     <select id="scale" onchange="sendScale()">
       <option value="1">1:1 (HQ)</option>
@@ -1146,8 +1146,8 @@ void old_handleRoot_to_delete() {
       <option value="5">FLOYD-STEINBERG</option>
     </select>
     <span style="margin-left:4px">STR:</span>
-    <input type="range" id="dither" min="0" max="8" step="1" value="4" style="width:80px" oninput="updateDitherText()" onchange="sendDither()">
-    <span id="dval" class="val">4</span>
+    <input type="range" id="dither" min="0" max="8" step="1" value="2" style="width:80px" oninput="updateDitherText()" onchange="sendDither()">
+    <span id="dval" class="val">2</span>
   </div>
   <div id="stats">
     <span class="dot" id="dot"></span>

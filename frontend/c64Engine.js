@@ -1,7 +1,7 @@
 // Pure JavaScript port of ESPStreamer C++ engine - VERSION 9.0 (Sync with C++ Reference)
 window.C64Engine = (function () {
     let currentMode = 'mc_gray', isRunning = false, connected = false;
-    let cf = 256, bv = 0, sf = 256, ds = 4, da = 2, bgC = 0, sc = 0, palIdx = 0, fCount = 0, tKB = 0, limitX = 100, limitY = 100;
+    let cf = 384, bv = 20, sf = 358, ds = 2, da = 2, bgC = 0, sc = 0, palIdx = 0, fCount = 0, tKB = 0, limitX = 100, limitY = 100;
     
     // Pre-allocated arrays to match ESP32 buffer sizes and avoid GC
     const preAllocated = {
