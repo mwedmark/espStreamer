@@ -11,6 +11,29 @@ import threading
 from typing import Dict, Optional
 from streamer_machinecode import STREAMER_PRG, STREAMER_CRT
 
+_ZERO_BYTES = b"\x00" * 8192
+_ZERO_MV = memoryview(_ZERO_BYTES)
+
+class FrameBufferPool:
+    """Preallocated bytearrays to avoid GC pressure during streaming."""
+    def __init__(self):
+        # Padded/page arrays (8192/1024/1024), payload buffers (11000/11000), chunk header (2)
+        self.bitmap_pages = bytearray(8192)
+        self.screen_pages = bytearray(1024)
+        self.color_pages = bytearray(1024)
+        self.prev_color_pages = bytearray(1024)
+        self.payload = bytearray(11000)
+        self.delta_payload = bytearray(11000)
+        self.chunk_header = bytearray(2)
+        
+        # Pre-wrap them in memoryviews
+        self.bitmap_pages_mv = memoryview(self.bitmap_pages)
+        self.screen_pages_mv = memoryview(self.screen_pages)
+        self.color_pages_mv = memoryview(self.color_pages)
+        self.prev_color_pages_mv = memoryview(self.prev_color_pages)
+        self.payload_mv = memoryview(self.payload)
+        self.delta_payload_mv = memoryview(self.delta_payload)
+
 class KungFuFlashSerial:
     """Kung Fu Flash hardware backend via USB serial."""
 
@@ -27,8 +50,11 @@ class KungFuFlashSerial:
         self.full_refresh_frames = 0
         self.next_buffer = 1
         self.bitmap_buffers = [None, None]
+        self.bitmap_buffers_mv = [None, None]
         self.screen_buffers = [None, None]
+        self.screen_buffers_mv = [None, None]
         self.frame_count = 0
+        self.pool = FrameBufferPool()
 
     @staticmethod
     def find_kff_port() -> list:
@@ -76,7 +102,9 @@ class KungFuFlashSerial:
             self.full_refresh_frames = 0
             self.next_buffer = 1
             self.bitmap_buffers = [None, None]
+            self.bitmap_buffers_mv = [None, None]
             self.screen_buffers = [None, None]
+            self.screen_buffers_mv = [None, None]
 
             self.ser.reset_output_buffer()
 
@@ -106,7 +134,9 @@ class KungFuFlashSerial:
         self.full_refresh_frames = 0
         self.next_buffer = 1
         self.bitmap_buffers = [None, None]
+        self.bitmap_buffers_mv = [None, None]
         self.screen_buffers = [None, None]
+        self.screen_buffers_mv = [None, None]
         print("Disconnected from KFF")
 
     def send_viewer(self, viewer_data: Optional[bytes] = None) -> bool:
@@ -193,7 +223,9 @@ class KungFuFlashSerial:
             self.full_refresh_frames = 0
             self.next_buffer = 1
             self.bitmap_buffers = [None, None]
+            self.bitmap_buffers_mv = [None, None]
             self.screen_buffers = [None, None]
+            self.screen_buffers_mv = [None, None]
             return True
 
         except Exception as e:
@@ -212,20 +244,39 @@ class KungFuFlashSerial:
         with self.lock:
             try:
                 mode_byte = mode & 0xFF
-                bitmap_data = bytes(bitmap[:8000]).ljust(8000, b"\x00")
-                screen_data = bytes(screen[:1000]).ljust(1000, b"\x00")
-                color_data = bytes(color[:1000]).ljust(1000, b"\x00")
-                bitmap_pages = bitmap_data.ljust(8192, b"\x00")
-                screen_pages = screen_data.ljust(1024, b"\x00")
-                color_pages = color_data.ljust(1024, b"\x00")
+
+                # Slicing bytes object directly (fast C slicing)
+                bitmap_len = min(len(bitmap), 8000)
+                self.pool.bitmap_pages[:bitmap_len] = bitmap[:bitmap_len]
+                if bitmap_len < 8000:
+                    self.pool.bitmap_pages[bitmap_len:8000] = _ZERO_MV[:8000 - bitmap_len]
+
+                screen_len = min(len(screen), 1000)
+                self.pool.screen_pages[:screen_len] = screen[:screen_len]
+                if screen_len < 1000:
+                    self.pool.screen_pages[screen_len:1000] = _ZERO_MV[:1000 - screen_len]
+
+                color_len = min(len(color), 1000)
+                self.pool.color_pages[:color_len] = color[:color_len]
+                if color_len < 1000:
+                    self.pool.color_pages[color_len:1000] = _ZERO_MV[:1000 - color_len]
 
                 mode_changed = self.prev_mode != mode_byte
                 if mode_changed:
                     self.full_refresh_frames = max(self.full_refresh_frames, 2)
 
                 force_full_refresh = self.full_refresh_frames > 0
-                screen_changed = mode_changed or self.prev_screen != screen_data
-                color_changed = mode_changed or self.prev_color != color_data
+
+                # Compare prev_screen and prev_color directly without allocation
+                if self.prev_screen is None:
+                    screen_changed = True
+                else:
+                    screen_changed = mode_changed or self.prev_screen != self.pool.screen_pages[:1000]
+
+                if self.prev_color is None:
+                    color_changed = True
+                else:
+                    color_changed = mode_changed or self.prev_color != self.pool.color_pages[:1000]
 
                 if screen_changed:
                     self.screen_refresh_frames = 2
@@ -236,41 +287,48 @@ class KungFuFlashSerial:
                 flags = (0x01 if send_screen else 0x00) | (
                     0x02 if send_color else 0x00
                 )
-                full_payload = bytes([mode_byte, bg_color & 0xFF, flags, 0])
-                full_payload += bitmap_data
-                if send_screen:
-                    full_payload += screen_data
-                if send_color:
-                    full_payload += color_data
 
-                payload = full_payload
+                # Build full payload in pool.payload
+                payload_buf = self.pool.payload
+                payload_buf[0] = mode_byte
+                payload_buf[1] = bg_color & 0xFF
+                payload_buf[2] = flags
+                payload_buf[3] = 0
+                payload_buf[4:8004] = self.pool.bitmap_pages[:8000]
+
+                payload_len = 8004
+                if send_screen:
+                    payload_buf[payload_len : payload_len + 1000] = self.pool.screen_pages[:1000]
+                    payload_len += 1000
+                if send_color:
+                    payload_buf[payload_len : payload_len + 1000] = self.pool.color_pages[:1000]
+                    payload_len += 1000
+
+                payload_view = self.pool.payload_mv[:payload_len]
                 used_delta = False
                 target_buffer = self.next_buffer
 
-                def page_records(current, previous, page_count):
-                    records = []
-                    if previous is None:
+                def page_records(curr_mv, prev_mv, page_count):
+                    if prev_mv is None:
                         return None
+                    records = []
                     for page in range(page_count):
                         start = page * 256
                         end = start + 256
-                        page_data = current[start:end]
-                        if page_data != previous[start:end]:
-                            records.append((page, page_data))
+                        if curr_mv[start:end] != prev_mv[start:end]:
+                            records.append((page, curr_mv[start:end]))
                     return records
 
                 if not force_full_refresh:
                     bitmap_records = page_records(
-                        bitmap_pages, self.bitmap_buffers[target_buffer], 32
+                        self.pool.bitmap_pages_mv, self.bitmap_buffers_mv[target_buffer], 32
                     )
                     screen_records = page_records(
-                        screen_pages, self.screen_buffers[target_buffer], 4
+                        self.pool.screen_pages_mv, self.screen_buffers_mv[target_buffer], 4
                     )
                     color_records = page_records(
-                        color_pages,
-                        self.prev_color.ljust(1024, b"\x00")
-                        if self.prev_color
-                        else None,
+                        self.pool.color_pages_mv,
+                        self.pool.prev_color_pages_mv if self.prev_color is not None else None,
                         4,
                     )
 
@@ -279,25 +337,36 @@ class KungFuFlashSerial:
                         and screen_records is not None
                         and color_records is not None
                     ):
-                        delta_payload = bytes(
-                            [mode_byte, bg_color & 0xFF, 0x80, len(bitmap_records)]
-                        )
-                        delta_payload += bytes(
-                            [len(screen_records), len(color_records), 0, 0]
-                        )
+                        # Construct delta payload in self.pool.delta_payload
+                        dp = self.pool.delta_payload
+                        dp[0] = mode_byte
+                        dp[1] = bg_color & 0xFF
+                        dp[2] = 0x80
+                        dp[3] = len(bitmap_records)
+                        dp[4] = len(screen_records)
+                        dp[5] = len(color_records)
+                        dp[6] = 0
+                        dp[7] = 0
+
+                        dp_len = 8
                         for records in (bitmap_records, screen_records, color_records):
                             for page, page_data in records:
-                                delta_payload += bytes([page, 0, 0, 0])
-                                delta_payload += page_data
+                                dp[dp_len] = page
+                                dp[dp_len + 1] = 0
+                                dp[dp_len + 2] = 0
+                                dp[dp_len + 3] = 0
+                                dp_len += 4
+                                dp[dp_len : dp_len + 256] = page_data
+                                dp_len += 256
 
-                        if len(delta_payload) < len(full_payload):
-                            payload = delta_payload
+                        if dp_len < payload_len:
+                            payload_view = self.pool.delta_payload_mv[:dp_len]
                             used_delta = True
 
                 offset = 0
                 self.ser.timeout = 2.0
 
-                while offset < len(payload):
+                while offset < len(payload_view):
                     req = self.ser.read(2)
                     if len(req) < 2:
                         print(f"Chunk request timeout at offset {offset}.")
@@ -308,23 +377,41 @@ class KungFuFlashSerial:
                     if chunk_size == 0:
                         continue
 
-                    remaining = len(payload) - offset
+                    remaining = len(payload_view) - offset
                     actual_size = min(chunk_size, remaining)
-                    chunk = payload[offset : offset + actual_size]
+                    chunk_mv = payload_view[offset : offset + actual_size]
 
-                    self.ser.write(
-                        bytes([actual_size & 0xFF, (actual_size >> 8) & 0xFF])
-                    )
-                    self.ser.write(chunk)
+                    self.pool.chunk_header[0] = actual_size & 0xFF
+                    self.pool.chunk_header[1] = (actual_size >> 8) & 0xFF
+
+                    self.ser.write(self.pool.chunk_header)
+                    self.ser.write(chunk_mv)
                     self.ser.flush()
 
                     offset += actual_size
 
                 self.prev_mode = mode_byte
-                self.bitmap_buffers[target_buffer] = bitmap_pages
-                self.screen_buffers[target_buffer] = screen_pages
-                self.prev_screen = screen_data
-                self.prev_color = color_data
+
+                # Copy buffer contents in-place to avoid allocations
+                if self.bitmap_buffers[target_buffer] is None:
+                    self.bitmap_buffers[target_buffer] = bytearray(8192)
+                    self.bitmap_buffers_mv[target_buffer] = memoryview(self.bitmap_buffers[target_buffer])
+                self.bitmap_buffers[target_buffer][:] = self.pool.bitmap_pages
+
+                if self.screen_buffers[target_buffer] is None:
+                    self.screen_buffers[target_buffer] = bytearray(1024)
+                    self.screen_buffers_mv[target_buffer] = memoryview(self.screen_buffers[target_buffer])
+                self.screen_buffers[target_buffer][:] = self.pool.screen_pages
+
+                if self.prev_screen is None:
+                    self.prev_screen = bytearray(1000)
+                self.prev_screen[:] = self.pool.screen_pages[:1000]
+
+                if self.prev_color is None:
+                    self.prev_color = bytearray(1000)
+                self.prev_color[:] = self.pool.color_pages[:1000]
+                self.pool.prev_color_pages[:1000] = self.pool.color_pages[:1000]
+
                 if self.full_refresh_frames > 0:
                     self.full_refresh_frames -= 1
                 if send_screen and not used_delta:
@@ -367,7 +454,9 @@ class KungFuFlashSerial:
             self.full_refresh_frames = 2
             self.next_buffer = 1
             self.bitmap_buffers = [None, None]
+            self.bitmap_buffers_mv = [None, None]
             self.screen_buffers = [None, None]
+            self.screen_buffers_mv = [None, None]
         print(f"Stream buffers reset ({reason}); forcing two full C64 refreshes.")
         return True
 
