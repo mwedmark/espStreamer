@@ -9,6 +9,7 @@ import serial.tools.list_ports
 import time
 import threading
 from typing import Dict, Optional
+import numpy as np
 from streamer_machinecode import STREAMER_PRG, STREAMER_CRT
 
 _ZERO_BYTES = b"\x00" * 8192
@@ -54,6 +55,7 @@ class KungFuFlashSerial:
         self.screen_buffers = [None, None]
         self.screen_buffers_mv = [None, None]
         self.frame_count = 0
+        self.delta_threshold = 0.90
         self.pool = FrameBufferPool()
 
     @staticmethod
@@ -311,12 +313,18 @@ class KungFuFlashSerial:
                 def page_records(curr_mv, prev_mv, page_count):
                     if prev_mv is None:
                         return None
+                    curr_arr = np.frombuffer(curr_mv, dtype=np.uint8)
+                    prev_arr = np.frombuffer(prev_mv, dtype=np.uint8)
+                    limit = page_count * 256
+                    curr_pages = curr_arr[:limit].reshape(page_count, 256)
+                    prev_pages = prev_arr[:limit].reshape(page_count, 256)
+                    diff_mask = np.any(curr_pages != prev_pages, axis=1)
+                    changed_pages = np.where(diff_mask)[0]
                     records = []
-                    for page in range(page_count):
+                    for page in changed_pages:
                         start = page * 256
                         end = start + 256
-                        if curr_mv[start:end] != prev_mv[start:end]:
-                            records.append((page, curr_mv[start:end]))
+                        records.append((page, curr_mv[start:end]))
                     return records
 
                 if not force_full_refresh:
@@ -337,31 +345,34 @@ class KungFuFlashSerial:
                         and screen_records is not None
                         and color_records is not None
                     ):
-                        # Construct delta payload in self.pool.delta_payload
-                        dp = self.pool.delta_payload
-                        dp[0] = mode_byte
-                        dp[1] = bg_color & 0xFF
-                        dp[2] = 0x80
-                        dp[3] = len(bitmap_records)
-                        dp[4] = len(screen_records)
-                        dp[5] = len(color_records)
-                        dp[6] = 0
-                        dp[7] = 0
+                        changed_count = len(bitmap_records) + len(screen_records) + len(color_records)
+                        # Only use delta if change rate is below threshold
+                        if (changed_count / 40.0) < self.delta_threshold:
+                            # Construct delta payload in self.pool.delta_payload
+                            dp = self.pool.delta_payload
+                            dp[0] = mode_byte
+                            dp[1] = bg_color & 0xFF
+                            dp[2] = 0x80
+                            dp[3] = len(bitmap_records)
+                            dp[4] = len(screen_records)
+                            dp[5] = len(color_records)
+                            dp[6] = 0
+                            dp[7] = 0
 
-                        dp_len = 8
-                        for records in (bitmap_records, screen_records, color_records):
-                            for page, page_data in records:
-                                dp[dp_len] = page
-                                dp[dp_len + 1] = 0
-                                dp[dp_len + 2] = 0
-                                dp[dp_len + 3] = 0
-                                dp_len += 4
-                                dp[dp_len : dp_len + 256] = page_data
-                                dp_len += 256
+                            dp_len = 8
+                            for records in (bitmap_records, screen_records, color_records):
+                                for page, page_data in records:
+                                    dp[dp_len] = page
+                                    dp[dp_len + 1] = 0
+                                    dp[dp_len + 2] = 0
+                                    dp[dp_len + 3] = 0
+                                    dp_len += 4
+                                    dp[dp_len : dp_len + 256] = page_data
+                                    dp_len += 256
 
-                        if dp_len < payload_len:
-                            payload_view = self.pool.delta_payload_mv[:dp_len]
-                            used_delta = True
+                            if dp_len < payload_len:
+                                payload_view = self.pool.delta_payload_mv[:dp_len]
+                                used_delta = True
 
                 offset = 0
                 self.ser.timeout = 2.0
