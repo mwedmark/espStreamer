@@ -56,6 +56,10 @@ class KungFuFlashSerial:
         self.screen_buffers_mv = [None, None]
         self.frame_count = 0
         self.delta_threshold = 0.90
+        self.bytes_sent = 0
+        self.total_ratio_sum = 0.0
+        self.ratio_count = 0
+        self.connection_start_time = None
         self.pool = FrameBufferPool()
 
     @staticmethod
@@ -112,6 +116,7 @@ class KungFuFlashSerial:
 
             print(f"Connected to KFF on {port}")
             print("Ready for chunked data flow.")
+            self.connection_start_time = time.time()
             return True
 
         except Exception as e:
@@ -139,6 +144,7 @@ class KungFuFlashSerial:
         self.bitmap_buffers_mv = [None, None]
         self.screen_buffers = [None, None]
         self.screen_buffers_mv = [None, None]
+        self.connection_start_time = None
         print("Disconnected from KFF")
 
     def send_viewer(self, viewer_data: Optional[bytes] = None) -> bool:
@@ -432,6 +438,18 @@ class KungFuFlashSerial:
                 self.next_buffer ^= 1
                 self.frame_count += 1
 
+                # Update metrics
+                actual_len = len(payload_view)
+                self.bytes_sent += actual_len
+                ratio = actual_len / max(1, payload_len)
+                self.total_ratio_sum += ratio
+                self.ratio_count += 1
+
+                # Log metrics every 100 frames
+                if self.frame_count > 0 and self.frame_count % 100 == 0:
+                    avg_ratio = self.total_ratio_sum / max(1, self.ratio_count)
+                    print(f"[Metrics] Frame {self.frame_count}: avg compression ratio: {avg_ratio:.2%}, total bytes sent: {self.bytes_sent:,} bytes")
+
                 return True
 
             except Exception as e:
@@ -480,6 +498,10 @@ class KungFuFlashSerial:
             "frame_count": self.frame_count,
             "is_viewer_running": self._viewer_running,
             "backend_name": "Kung Fu Flash (Serial CDC)",
+            "bytes_sent": self.bytes_sent,
+            "total_ratio_sum": self.total_ratio_sum,
+            "ratio_count": self.ratio_count,
+            "connection_start_time": self.connection_start_time,
             "message": "Streaming"
             if self._viewer_running
             else "Connected"

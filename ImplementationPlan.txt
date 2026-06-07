@@ -1,0 +1,66 @@
+# Add Metrics and Monitoring to Streaming Server
+
+This plan outlines the integration of server metrics (FPS, bytes sent, error rates, uptime, compression ratios) and the exposure of `/status` (JSON), `/metrics` (Prometheus), and `/dashboard` (HTML) HTTP endpoints on the existing WebSocket server.
+
+## User Review Required
+
+> [!IMPORTANT]
+> - All HTTP endpoints (`/status`, `/metrics`, `/dashboard`) will run on the **same port** as the WebSocket server, utilizing the `process_request` interceptor of the Python `websockets` library.
+> - **Zero new dependencies** or processes are introduced.
+> - A beautiful real-time dark-mode HTML dashboard will be served at `http://<host>:<port>/dashboard`.
+> - Delta compression ratios will be logged to the console every 100 frames.
+
+## Proposed Changes
+
+### Kung Fu Flash Backend
+
+#### [MODIFY] [backend_kungfu.py](file:///d:/git/espStreamer/backend_kungfu.py)
+
+- Initialize the following properties in `__init__`:
+  - `self.bytes_sent = 0`
+  - `self.total_ratio_sum = 0.0`
+  - `self.ratio_count = 0`
+  - `self.connection_start_time = None`
+- Set `self.connection_start_time = time.time()` in `connect()`.
+- Update `stream_frame` to:
+  - Track bytes sent: `self.bytes_sent += len(payload_view)`.
+  - Calculate delta compression ratio: `ratio = len(payload_view) / len(full_payload)`.
+  - Add to `self.total_ratio_sum` and increment `self.ratio_count`.
+  - Log summary to console every 100 frames.
+
+### VICE Backend
+
+#### [MODIFY] [backend_vice.py](file:///d:/git/espStreamer/backend_vice.py)
+
+- Initialize:
+  - `self.bytes_sent = 0`
+  - `self.connection_start_time = None`
+- Set `self.connection_start_time = time.time()` in `connect()`.
+- In `stream_frame()`, increment `self.bytes_sent += 10060`.
+
+### WebSocket Server
+
+#### [MODIFY] [ws_server.py](file:///d:/git/espStreamer/ws_server.py)
+
+- Implement `FPSTracker` class utilizing `collections.deque` window.
+- In `UnifiedWebSocketServer.__init__`:
+  - Initialize `self.start_time = time.time()`.
+  - Initialize `self.fps_tracker = FPSTracker()`.
+  - Initialize `self.error_count = 0`.
+- In `_handle_binary_frame`:
+  - Call `self.fps_tracker.tick()`.
+  - If `stream_frame` returns `False` or raises an exception, increment `self.error_count`.
+- Implement `process_request(path, headers)` on `UnifiedWebSocketServer` to serve:
+  - `/status` -> JSON payload of current server state and metrics.
+  - `/metrics` -> Prometheus exposition format for Prometheus scraping.
+  - `/dashboard` -> A premium dark-mode dashboard HTML page that polls `/status` and displays metrics with nice graphs/gauges.
+- Register `process_request` hook in `websockets.serve`.
+
+## Verification Plan
+
+### Automated Tests
+- Run `server_launcher.py` with mock/VICE/KFF.
+- Use `curl` or browser to fetch:
+  - `http://localhost:8765/status`
+  - `http://localhost:8765/metrics`
+  - `http://localhost:8765/dashboard`

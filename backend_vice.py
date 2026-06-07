@@ -7,6 +7,7 @@ Simulates streaming to VICE via the Binary Monitor Port.
 from typing import Dict
 import socket
 import struct
+import time
 
 
 class VICEBinaryMonitor:
@@ -134,17 +135,21 @@ class VICEKungFuSimulator:
         self.monitor = VICEBinaryMonitor(6511)
         self._is_viewer_running = True
         self.connected = False
+        self.bytes_sent = 0
+        self.connection_start_time = None
         
     def connect(self, port=None):
         if not self.monitor.connect():
             return False
         self.monitor.resume_execution()
         self.connected = True
+        self.connection_start_time = time.time()
         return True
 
     def disconnect(self):
         self.monitor.disconnect()
         self.connected = False
+        self.connection_start_time = None
 
     def send_viewer(self, viewer_data=None):
         print(f"Would send viewer to VICE")
@@ -170,6 +175,7 @@ class VICEKungFuSimulator:
         success = self.monitor.write_memory(0xD800, color, side_effects=True)
         
         self.frame_count += 1
+        self.bytes_sent += 10060
         self.monitor.resume_execution()
         
         return success
@@ -179,7 +185,9 @@ class VICEKungFuSimulator:
             "frame_count": self.frame_count,
             "connected": self.connected,
             "is_viewer_running": self._is_viewer_running,
-            "backend_name": "VICE Simulation (Binary Monitor)"
+            "backend_name": "VICE Simulation (Binary Monitor)",
+            "bytes_sent": self.bytes_sent,
+            "connection_start_time": self.connection_start_time
         }
 
     def reset(self):

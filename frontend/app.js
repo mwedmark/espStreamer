@@ -179,6 +179,16 @@ function updateKungFuStatus(status, connected) {
     statusElement.textContent = status;
     statusElement.style.color = connected ? '#40ff40' : '#ff4040';
   }
+  const dashLink = document.getElementById('dashboard-link');
+  if (dashLink) {
+    if (connected) {
+      const port = kungFuViceMode ? 8766 : 8765;
+      dashLink.href = `http://localhost:${port}/dashboard`;
+      dashLink.style.display = 'inline-block';
+    } else {
+      dashLink.style.display = 'none';
+    }
+  }
 }
 
 async function sendImageToC64() {
