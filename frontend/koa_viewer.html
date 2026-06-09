@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>C64 KOALA PAINT VIEWER</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a16;
+      --card-bg: rgba(20, 20, 45, 0.65);
+      --border: rgba(100, 140, 255, 0.25);
+      --primary: #4f46e5;
+      --primary-glow: rgba(79, 70, 229, 0.4);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.4);
+      --text: #e2e8f0;
+      --text-muted: #7085aa;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: radial-gradient(circle at top, #16183a 0%, var(--bg) 100%);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    h1 {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      background: linear-gradient(90deg, #6c8cff, #a87fff, #6c8cff);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+      text-shadow: 0 0 30px rgba(108, 140, 255, 0.25);
+    }
+
+    .subtitle {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 13px;
+      letter-spacing: 4px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 760px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 30px;
+    }
+
+    .canvas-container {
+      position: relative;
+      background: #000;
+      border: 3px solid var(--border);
+      border-radius: 16px;
+      padding: 8px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 30px rgba(100, 140, 255, 0.15);
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .canvas-container.active {
+      border-color: #6c8cff;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 40px rgba(108, 140, 255, 0.3);
+    }
+
+    canvas {
+      width: 640px;
+      height: 400px;
+      image-rendering: pixelated;
+      display: block;
+      border-radius: 8px;
+      background: #000;
+    }
+
+    .control-card {
+      width: 100%;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      flex-wrap: wrap;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 1.5px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    input[type=text], select {
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 14px;
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+      transition: all 0.3s;
+      width: 100%;
+    }
+
+    input[type=text]:focus, select:focus {
+      border-color: #6c8cff;
+      box-shadow: 0 0 12px rgba(108, 140, 255, 0.25);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    button {
+      padding: 11px 28px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      cursor: pointer;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      transition: all 0.3s;
+    }
+
+    button.primary {
+      background: linear-gradient(185deg, #4f46e5, #3b82f6);
+      color: #fff;
+      box-shadow: 0 4px 14px var(--primary-glow);
+    }
+
+    button.primary:hover {
+      background: linear-gradient(185deg, #6366f1, #60a5fa);
+      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+      transform: translateY(-1px);
+    }
+
+    button.secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: var(--border);
+      color: var(--text);
+    }
+
+    button.secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: #6c8cff;
+    }
+
+    .stats-panel {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 12px;
+      padding: 12px 20px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 14px;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .indicator-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #444;
+      box-shadow: 0 0 8px #444;
+      transition: all 0.3s;
+    }
+
+    .indicator-dot.active {
+      background: var(--success);
+      box-shadow: 0 0 12px var(--success-glow);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.7; }
+      50% { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.7; }
+    }
+
+    .status-live {
+      color: var(--success);
+      font-weight: bold;
+    }
+
+    .fps-counter {
+      color: #6c8cff;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>C64 KOALA VIEWER</h1>
+    <div class="subtitle">Binary HTTP Stream Decoder</div>
+  </header>
+
+  <div class="container">
+    <div class="canvas-container" id="canvas-wrapper">
+      <canvas id="koa-canvas" width="160" height="200"></canvas>
+    </div>
+
+    <div class="control-card">
+      <div class="control-row">
+        <div class="input-group" style="flex: 2;">
+          <label for="host-input">Streaming Server URL</label>
+          <input type="text" id="host-input" value="http://localhost:8765" placeholder="e.g. http://localhost:8765 or http://192.168.1.100">
+        </div>
+        <div class="input-group">
+          <label for="interval-select">Polling Rate</label>
+          <select id="interval-select">
+            <option value="50">Fastest (50ms)</option>
+            <option value="100" selected>Fast (100ms)</option>
+            <option value="250">Normal (250ms)</option>
+            <option value="500">Slow (500ms)</option>
+            <option value="1000">1 Second (1000ms)</option>
+          </select>
+        </div>
+        <div class="btn-group">
+          <button class="primary" id="btn-toggle" onclick="togglePolling()">Start Polling</button>
+        </div>
+      </div>
+
+      <div class="stats-panel">
+        <div class="status-indicator">
+          <div class="indicator-dot" id="status-dot"></div>
+          <span id="status-txt">Status: Offline</span>
+        </div>
+        <div>Rate: <span class="fps-counter" id="fps-val">0.0</span> FPS</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Standard Pepto (PAL) palette colors
+    const c64Pal = [
+      [0, 0, 0],       // 0: Black
+      [255, 255, 255], // 1: White
+      [104, 55, 43],   // 2: Dark Red
+      [112, 164, 178], // 3: Light Cyan
+      [111, 61, 134],  // 4: Purple
+      [88, 141, 67],   // 5: Green
+      [53, 40, 121],   // 6: Blue
+      [184, 199, 111], // 7: Yellow
+      [111, 79, 37],   // 8: Orange
+      [67, 57, 0],     // 9: Brown
+      [154, 103, 89],  // 10: Light Red
+      [68, 68, 68],    // 11: Dark Gray
+      [108, 108, 108], // 12: Medium Gray
+      [154, 210, 132], // 13: Light Green
+      [108, 94, 181],  // 14: Light Blue
+      [149, 149, 149]  // 15: Light Gray
+    ];
+
+    let polling = false;
+    let pollTimeout = null;
+    let lastTime = Date.now();
+    let frameCount = 0;
+
+    function renderKoala(koaBytes, canvas) {
+      const ctx = canvas.getContext('2d');
+      const imgData = ctx.createImageData(160, 200);
+      
+      const bitmap = koaBytes.subarray(2, 8002);
+      const screen = koaBytes.subarray(8002, 9002);
+      const color = koaBytes.subarray(9002, 10002);
+      const bgColorIndex = koaBytes[10002] & 0x0F;
+      const bgCol = c64Pal[bgColorIndex] || [0, 0, 0];
+      
+      for (let cy = 0; cy < 25; cy++) {
+        for (let cx = 0; cx < 40; cx++) {
+          const cellIdx = cy * 40 + cx;
+          const screenByte = screen[cellIdx];
+          const colorByte = color[cellIdx];
+          
+          const col0 = bgCol;
+          const col1 = c64Pal[screenByte >> 4] || [0, 0, 0];
+          const col2 = c64Pal[screenByte & 0x0F] || [0, 0, 0];
+          const col3 = c64Pal[colorByte & 0x0F] || [0, 0, 0];
+          const cols = [col0, col1, col2, col3];
+          
+          for (let py = 0; py < 8; py++) {
+            const byte = bitmap[cellIdx * 8 + py];
+            const y = cy * 8 + py;
+            
+            for (let px = 0; px < 4; px++) {
+              const bitShift = (3 - px) * 2;
+              const colorCode = (byte >> bitShift) & 3;
+              const rgb = cols[colorCode];
+              
+              const outIdx = (y * 160 + cx * 4 + px) * 4;
+              imgData.data[outIdx] = rgb[0];
+              imgData.data[outIdx + 1] = rgb[1];
+              imgData.data[outIdx + 2] = rgb[2];
+              imgData.data[outIdx + 3] = 255;
+            }
+          }
+        }
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+
+    async function pollImage() {
+      if (!polling) return;
+      
+      const host = document.getElementById('host-input').value.trim().replace(/\/$/, '');
+      const url = `${host}/image?format=koa&t=${Date.now()}`;
+      
+      try {
+        const res = await fetch(url);
+        if (res.ok) {
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength === 10003) {
+            const bytes = new Uint8Array(buf);
+            const canvas = document.getElementById('koa-canvas');
+            renderKoala(bytes, canvas);
+            
+            frameCount++;
+            const now = Date.now();
+            if (now - lastTime >= 1000) {
+              const fps = (frameCount * 1000 / (now - lastTime)).toFixed(1);
+              document.getElementById('fps-val').innerText = fps;
+              frameCount = 0;
+              lastTime = now;
+            }
+            document.getElementById('status-dot').className = 'indicator-dot active';
+            document.getElementById('status-txt').innerHTML = 'Status: <span class="status-live">Streaming Live</span>';
+          } else {
+            document.getElementById('status-dot').className = 'indicator-dot';
+            document.getElementById('status-txt').innerText = `Status: Bad byte size (${buf.byteLength})`;
+          }
+        } else {
+          document.getElementById('status-dot').className = 'indicator-dot';
+          if (res.status === 503) {
+            document.getElementById('status-txt').innerText = "Status: Idle (No stream data)";
+          } else {
+            document.getElementById('status-txt').innerText = `Status: Error ${res.status}`;
+          }
+        }
+      } catch(e) {
+        document.getElementById('status-dot').className = 'indicator-dot';
+        document.getElementById('status-txt').innerText = `Status: Offline (Connection failed)`;
+      }
+      
+      const interval = parseInt(document.getElementById('interval-select').value);
+      pollTimeout = setTimeout(pollImage, interval);
+    }
+
+    function togglePolling() {
+      const btn = document.getElementById('btn-toggle');
+      const wrapper = document.getElementById('canvas-wrapper');
+      
+      if (polling) {
+        polling = false;
+        clearTimeout(pollTimeout);
+        btn.textContent = 'Start Polling';
+        btn.style.background = '';
+        wrapper.className = 'canvas-container';
+        document.getElementById('status-dot').className = 'indicator-dot';
+        document.getElementById('status-txt').innerText = 'Status: Stopped';
+        document.getElementById('fps-val').innerText = '0.0';
+      } else {
+        polling = true;
+        btn.textContent = 'Stop Polling';
+        btn.style.background = 'linear-gradient(185deg, #ef4444, #dc2626)';
+        wrapper.className = 'canvas-container active';
+        lastTime = Date.now();
+        frameCount = 0;
+        pollImage();
+      }
+    }
+  </script>
+</body>
+</html>
