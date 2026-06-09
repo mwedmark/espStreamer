@@ -12,6 +12,7 @@ import time
 import collections
 import http
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
 from backend_base import StreamingBackend
 
 
@@ -42,6 +43,7 @@ class UnifiedWebSocketServer:
         self.start_time = time.time()
         self.fps_tracker = FPSTracker()
         self.error_count = 0
+        self.last_frame = None
 
     async def handle_client(self, websocket):
         """Handle a new client connection."""
@@ -232,6 +234,14 @@ class UnifiedWebSocketServer:
         bitmap = message[2:8002]
         screen = message[8002:9002]
         color = message[9002:10002]
+
+        self.last_frame = {
+            "mode": mode,
+            "bg_color": bg_color,
+            "bitmap": bitmap,
+            "screen": screen,
+            "color": color
+        }
 
         if self.backend.is_viewer_running:
             self.fps_tracker.tick()
@@ -875,25 +885,64 @@ class UnifiedWebSocketServer:
         if path_str is None:
             return None
 
-        path_only = path_str.split('?')[0]
-        if path_only not in ("/status", "/metrics", "/dashboard"):
+        parsed_url = urlparse(path_str)
+        path_only = parsed_url.path
+        query_params = parse_qs(parsed_url.query)
+
+        if path_only not in ("/status", "/metrics", "/dashboard", "/image", "/koa"):
             return None
 
         try:
-            if path_only == "/status":
+            status_code = 200
+            is_binary = False
+            if path_only in ("/image", "/koa"):
+                fmt = "koa"
+                if "format" in query_params:
+                    fmt = query_params["format"][0].lower()
+                
+                if fmt == "koa":
+                    if not self.last_frame:
+                        response_body = b"No image has been streamed yet."
+                        status_code = 503
+                        content_type = "text/plain; charset=utf-8"
+                    else:
+                        koa = bytearray(10003)
+                        koa[0] = 0x00
+                        koa[1] = 0x60
+                        
+                        bitmap = self.last_frame.get('bitmap', b'')
+                        screen = self.last_frame.get('screen', b'')
+                        color = self.last_frame.get('color', b'')
+                        bg_color = self.last_frame.get('bg_color', 0)
+                        
+                        koa[2:8002] = bitmap[:8000]
+                        koa[8002:9002] = screen[:1000]
+                        koa[9002:10002] = color[:1000]
+                        koa[10002] = bg_color
+                        
+                        response_body = bytes(koa)
+                        status_code = 200
+                        content_type = "application/octet-stream"
+                        is_binary = True
+                else:
+                    response_body = b"Unsupported format. Only 'koa' is currently supported."
+                    status_code = 400
+                    content_type = "text/plain; charset=utf-8"
+            elif path_only == "/status":
                 status = self.get_unified_status()
-                response_body_str = json.dumps(status, indent=2)
+                response_body = json.dumps(status, indent=2).encode('utf-8')
                 content_type = "application/json"
             elif path_only == "/metrics":
-                response_body_str = self.get_prometheus_metrics()
+                response_body = self.get_prometheus_metrics().encode('utf-8')
                 content_type = "text/plain; version=0.0.4; charset=utf-8"
             elif path_only == "/dashboard":
-                response_body_str = self.get_dashboard_html()
+                response_body = self.get_dashboard_html().encode('utf-8')
                 content_type = "text/html; charset=utf-8"
 
             if is_new_signature and connection is not None:
                 # websockets >= 14 expects a Response object returned by connection.respond()
-                response = connection.respond(200, response_body_str)
+                response = connection.respond(status_code, "")
+                response.body = response_body
                 # Safely delete default headers to avoid duplicates
                 if "Content-Type" in response.headers:
                     del response.headers["Content-Type"]
@@ -904,16 +953,19 @@ class UnifiedWebSocketServer:
                 response.headers["Content-Type"] = content_type
                 response.headers["Content-Length"] = str(len(response.body))
                 response.headers["Access-Control-Allow-Origin"] = "*"
+                if is_binary and status_code == 200:
+                    response.headers["Content-Disposition"] = 'attachment; filename="image.koa"'
                 return response
             else:
                 # Older websockets expects a 3-tuple: (status, headers, body_bytes)
-                response_body_bytes = response_body_str.encode('utf-8')
                 response_headers = [
                     ("Content-Type", content_type),
-                    ("Content-Length", str(len(response_body_bytes))),
+                    ("Content-Length", str(len(response_body))),
                     ("Access-Control-Allow-Origin", "*"),
                 ]
-                return 200, response_headers, response_body_bytes
+                if is_binary and status_code == 200:
+                    response_headers.append(("Content-Disposition", 'attachment; filename="image.koa"'))
+                return status_code, response_headers, response_body
 
         except Exception as e:
             print(f"Error handling HTTP request for {path_only}: {e}")

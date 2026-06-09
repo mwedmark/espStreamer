@@ -941,6 +941,75 @@ void handleStats() {
   server.sendContent(json);
 }
 
+void handleImage() {
+  addCORSHeaders();
+  
+  String format = "koa";
+  if (server.hasArg("format")) {
+    format = server.arg("format");
+    format.toLowerCase();
+  }
+  
+  if (format == "koa") {
+    server.sendHeader("Content-Disposition", "attachment; filename=\"image.koa\"");
+    server.setContentLength(10003);
+    server.send(200, "application/octet-stream", "");
+    
+    // Send 2-byte header
+    uint8_t header[2] = {0x00, 0x60};
+    server.sendContent((const char*)header, 2);
+    
+    uint8_t* active_buf = c64_buffer + active_buffer * 34005;
+    
+    // Send Bitmap (8000 bytes)
+    server.sendContent((const char*)active_buf, 8000);
+    
+    // Send Screen (1000 bytes)
+    server.sendContent((const char*)(active_buf + 8000), 1000);
+    
+    // Send Color RAM (1000 bytes)
+    if (IS_FLI) {
+      server.sendContent((const char*)(active_buf + 16000), 1000);
+    } else {
+      server.sendContent((const char*)(active_buf + 9000), 1000);
+    }
+    
+    // Send Background color (1 byte)
+    server.sendContent((const char*)&globalBgColor, 1);
+  } else {
+    server.send(400, "text/plain", "Unsupported format. Only 'koa' is currently supported.");
+  }
+}
+
+void handleKoa() {
+  addCORSHeaders();
+  server.sendHeader("Content-Disposition", "attachment; filename=\"image.koa\"");
+  server.setContentLength(10003);
+  server.send(200, "application/octet-stream", "");
+  
+  // Send 2-byte header
+  uint8_t header[2] = {0x00, 0x60};
+  server.sendContent((const char*)header, 2);
+  
+  uint8_t* active_buf = c64_buffer + active_buffer * 34005;
+  
+  // Send Bitmap (8000 bytes)
+  server.sendContent((const char*)active_buf, 8000);
+  
+  // Send Screen (1000 bytes)
+  server.sendContent((const char*)(active_buf + 8000), 1000);
+  
+  // Send Color RAM (1000 bytes)
+  if (IS_FLI) {
+    server.sendContent((const char*)(active_buf + 16000), 1000);
+  } else {
+    server.sendContent((const char*)(active_buf + 9000), 1000);
+  }
+  
+  // Send Background color (1 byte)
+  server.sendContent((const char*)&globalBgColor, 1);
+}
+
 void addCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*", true);
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -1988,6 +2057,10 @@ void setup() {
   server.on("/", HTTP_OPTIONS, handleOptions);
   server.on("/data", handleData);
   server.on("/data", HTTP_OPTIONS, handleOptions);
+  server.on("/image", handleImage);
+  server.on("/image", HTTP_OPTIONS, handleOptions);
+  server.on("/koa", handleKoa);
+  server.on("/koa", HTTP_OPTIONS, handleOptions);
   server.on("/stats", handleStats);
   server.on("/stats", HTTP_OPTIONS, handleOptions);
   server.on("/setmode", handleSetMode);
