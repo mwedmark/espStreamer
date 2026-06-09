@@ -498,6 +498,17 @@ function deleteScreenshot(index) {
 }
 
 async function save(t) {
+  if (t === 'KOA') {
+    try {
+      const response = await apiFetch('/koa?t=' + Date.now());
+      const data = new Uint8Array(await response.arrayBuffer());
+      download(data, 'image.koa');
+    } catch(e) {
+      alert('Failed to download KOA: ' + e.message);
+    }
+    return;
+  }
+
   // Multi-frame: route to slideshow generators
   if (screenshots.length > 1 && t === 'PRG') { await createSlideshow('PRG'); return; }
   if (screenshots.length > 1 && t === 'CRT') { await createSlideshow('CRT'); return; }

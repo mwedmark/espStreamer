@@ -330,6 +330,22 @@ window.C64Engine = (function () {
                 new Uint8Array(r).set(dataToReturn); 
                 return { ok: true, arrayBuffer: async () => r }; 
             }
+            if (p.startsWith('/koa')) {
+                let r = new ArrayBuffer(10003);
+                let koa = new Uint8Array(r);
+                koa[0] = 0; koa[1] = 0x60;
+                const active_buf = b.subarray(activeB * 34005, activeB * 34005 + 34005);
+                koa.set(active_buf.subarray(0, 8000), 2);
+                koa.set(active_buf.subarray(8000, 9000), 8002);
+                let isF = currentMode.includes('fli');
+                if (isF) {
+                    koa.set(active_buf.subarray(16000, 17000), 9002);
+                } else {
+                    koa.set(active_buf.subarray(9000, 10000), 9002);
+                }
+                koa[10002] = bgC;
+                return { ok: true, arrayBuffer: async () => r };
+            }
              if (p.startsWith('/stats')) return { ok: true, json: async () => ({ frames: fCount, mode: currentMode, connected: connected, contrast: cf / 256, brightness: bv, saturation: sf / 256, bg: bgC, dither: ds, ditherType: da, totalKB: tKB, paletteIdx: palIdx, scale: 1, scaling: sc, limitX: limitX, limitY: limitY }) };
             if (p.startsWith('/setmode')) currentMode = u.searchParams.get('m'); if (p.startsWith('/setcontrast')) cf = Math.floor(parseFloat(u.searchParams.get('c')) * 256); if (p.startsWith('/setbrightness')) bv = parseInt(u.searchParams.get('b')); if (p.startsWith('/setsaturation')) sf = Math.floor(parseFloat(u.searchParams.get('s')) * 256); if (p.startsWith('/setbg')) bgC = parseInt(u.searchParams.get('c')); if (p.startsWith('/setpalette')) { palIdx = parseInt(u.searchParams.get('p')); pal = pals[palIdx]; } if (p.startsWith('/setdither')) ds = parseInt(u.searchParams.get('d')); if (p.startsWith('/setdithertype')) da = parseInt(u.searchParams.get('t')); if (p.startsWith('/setscaling')) sc = parseInt(u.searchParams.get('s')); if (p.startsWith('/setlimitx')) limitX = parseInt(u.searchParams.get('x')); if (p.startsWith('/setlimity')) limitY = parseInt(u.searchParams.get('y')); return { ok: true };
         }
