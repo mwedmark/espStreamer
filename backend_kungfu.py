@@ -521,9 +521,14 @@ class KungFuFlashSerial:
         self.disconnect()
 
 
-# Export viewer binaries to disk for direct use
-with open("kungfu_viewer.prg", "wb") as f:
+# Export viewer binaries to tools/ directory for direct use
+import os
+tools_dir = os.path.join(os.path.dirname(__file__), "tools")
+os.makedirs(tools_dir, exist_ok=True)
+
+with open(os.path.join(tools_dir, "kungfu_viewer.prg"), "wb") as f:
     f.write(STREAMER_PRG)
 
-with open("kungfu_viewer.crt", "wb") as f:
+with open(os.path.join(tools_dir, "kungfu_viewer.crt"), "wb") as f:
     f.write(STREAMER_CRT)
+

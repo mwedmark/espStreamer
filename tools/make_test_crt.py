@@ -241,10 +241,12 @@ crt = (crt_header("PIPELINE TEST")
        + chip(1, 0x8000, bytes(ROML1))
        + chip(1, 0xA000, ROML0))          # bank 1 ROMH empty
 
-with open("test_hello.crt", "wb") as f:
+import os
+out_path = os.path.join(os.path.dirname(__file__), "test_hello.crt")
+with open(out_path, "wb") as f:
     f.write(crt)
 
-print(f"\nWritten {len(crt)} bytes -> test_hello.crt")
+print(f"\nWritten {len(crt)} bytes -> {out_path}")
 print()
 print("EXPECTED BOOT SEQUENCE:")
 print("  1. ROMH $E000: Phase 1 copies Phase 2 to $0200, JMP $0200")
