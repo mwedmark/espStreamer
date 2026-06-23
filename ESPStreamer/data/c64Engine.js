@@ -166,7 +166,7 @@ window.C64Engine = (function () {
                                 else if (lc[i] > m2) { m2 = lc[i]; c2 = i; }
                             }
                             if (m1 === 0) c1 = cC; if (m2 === 0) c2 = c1;
-                            b[base + 8000 + py * 1024 + cIdx] = (c1 << 4) | (c2 & 15);
+                            b[base + 8000 + py * 1000 + cIdx] = (c1 << 4) | (c2 & 15);
 
                             let pb = 0;
                             for (let px = 0; px < 4; px++) {
@@ -182,7 +182,7 @@ window.C64Engine = (function () {
                                 }
                                 pb |= (bits << ((3 - px) * 2));
                             }
-                            b[base + cIdx * 8 + py] = pb;
+                            b[base + cIdx * 8 + py] = cx < 3 ? 0 : pb;
                         }
                     } else if (isH) {
                         const cnts = preAllocated.cnts; cnts.fill(0);

@@ -159,23 +159,68 @@ class VICEKungFuSimulator:
         if not self.monitor.sock:
             return False
             
-        if mode == 1:
-            self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
-            self.monitor.write_memory(0xD016, bytes([0xC8]), side_effects=True)
-        else:
+        if mode == 2: # FLI
+            # FLI VIC Bank 1 setup ($4000-$7FFF)
+            self.monitor.write_memory(0xDD00, bytes([0x02]), side_effects=True)
             self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
             self.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
+            self.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
+            self.monitor.write_memory(0xD020, bytes([0x00]), side_effects=True)
+            self.monitor.write_memory(0xD021, bytes([bg_color]), side_effects=True)
             
-        self.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
-        self.monitor.write_memory(0xD020, bytes([0x00]), side_effects=True)
-        self.monitor.write_memory(0xD021, bytes([bg_color]), side_effects=True)
-        
-        self.monitor.write_memory(0x2000, bitmap)
-        self.monitor.write_memory(0x0400, screen)
-        success = self.monitor.write_memory(0xD800, color, side_effects=True)
-        
+            self.monitor.write_memory(0x6000, bitmap[:8000])
+            
+            # Pad screen RAM from packed 8000 bytes to 8192 bytes (1024 step)
+            padded_screen = bytearray(8192)
+            for py in range(8):
+                src_offset = py * 1000
+                dst_offset = py * 1024
+                padded_screen[dst_offset : dst_offset + 1000] = screen[src_offset : src_offset + 1000]
+                
+            self.monitor.write_memory(0x4000, bytes(padded_screen))
+            success = self.monitor.write_memory(0xD800, color[:1000], side_effects=True)
+            self.bytes_sent += 17060
+        elif mode == 3: # IFLI
+            # IFLI VIC Bank 1 setup ($4000-$7FFF)
+            self.monitor.write_memory(0xDD00, bytes([0x02]), side_effects=True)
+            self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
+            self.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
+            self.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
+            self.monitor.write_memory(0xD020, bytes([0x00]), side_effects=True)
+            self.monitor.write_memory(0xD021, bytes([bg_color]), side_effects=True)
+            
+            # bitmap here has 34000 bytes; bitmap[:8000] is Frame A bitmap
+            self.monitor.write_memory(0x6000, bitmap[:8000])
+            
+            # Pad screen RAM from packed 8000 bytes to 8192 bytes (1024 step)
+            padded_screen = bytearray(8192)
+            for py in range(8):
+                src_offset = py * 1000
+                dst_offset = py * 1024
+                padded_screen[dst_offset : dst_offset + 1000] = screen[src_offset : src_offset + 1000]
+                
+            self.monitor.write_memory(0x4000, bytes(padded_screen))
+            success = self.monitor.write_memory(0xD800, color[:1000], side_effects=True)
+            self.bytes_sent += 34060
+        else: # Standard Multicolor/Hires
+            self.monitor.write_memory(0xDD00, bytes([0x03]), side_effects=True)
+            if mode == 1:
+                self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
+                self.monitor.write_memory(0xD016, bytes([0xC8]), side_effects=True)
+            else:
+                self.monitor.write_memory(0xD011, bytes([0x3B]), side_effects=True)
+                self.monitor.write_memory(0xD016, bytes([0xD8]), side_effects=True)
+                
+            self.monitor.write_memory(0xD018, bytes([0x18]), side_effects=True)
+            self.monitor.write_memory(0xD020, bytes([0x00]), side_effects=True)
+            self.monitor.write_memory(0xD021, bytes([bg_color]), side_effects=True)
+            
+            self.monitor.write_memory(0x2000, bitmap[:8000])
+            self.monitor.write_memory(0x0400, screen[:1000])
+            success = self.monitor.write_memory(0xD800, color[:1000], side_effects=True)
+            self.bytes_sent += 10060
+            
         self.frame_count += 1
-        self.bytes_sent += 10060
         self.monitor.resume_execution()
         
         return success

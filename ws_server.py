@@ -231,9 +231,22 @@ class UnifiedWebSocketServer:
 
         mode = message[0]
         bg_color = message[1]
-        bitmap = message[2:8002]
-        screen = message[8002:9002]
-        color = message[9002:10002]
+        
+        if len(message) >= 34003:
+            # IFLI mode (34001 bytes of data)
+            bitmap = message[2:34002]
+            screen = message[8002:16002]  # Screen pages A
+            color = message[16002:17002]   # Color A
+        elif len(message) == 17003:
+            # FLI mode (17001 bytes of data)
+            bitmap = message[2:8002]
+            screen = message[8002:16002]
+            color = message[16002:17002]
+        else:
+            # Standard Multicolor/Hires (10000 bytes of data)
+            bitmap = message[2:8002]
+            screen = message[8002:9002]
+            color = message[9002:10002]
 
         self.last_frame = {
             "mode": mode,

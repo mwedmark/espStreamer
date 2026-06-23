@@ -381,7 +381,7 @@ void packC64Frame() {
             }
             if(m1==0) c1 = cellCol;
             if(m2==0) c2 = c1;
-            screens[py*1024 + cellIdx] = (c1 << 4) | (c2 & 0x0F);
+            screens[py*1000 + cellIdx] = (c1 << 4) | (c2 & 0x0F);
             
             uint8_t byte = 0;
             for (int px=0; px<4; px++) {
@@ -1379,8 +1379,8 @@ async function save(t) {
       0xA9, 0x02, 0x85, 0x02,
       // l_waitF8: Wait for raster $F8
       0xAD, 0x12, 0xD0, 0xC9, 0xF8, 0xD0, 0xF9,
-      // Toggle bank state and update DD00 (Toggle between Bank 1 and Bank 3: 02 XOR 02 = 00!)
-      0xA5, 0x02, 0x49, 0x02, 0x85, 0x02, 0x8D, 0x00, 0xDD,
+      // Toggle bank state and update DD00 (Toggle between Bank 1 and Bank 2: 02 XOR 03 = 01!)
+      0xA5, 0x02, 0x49, 0x03, 0x85, 0x02, 0x8D, 0x00, 0xDD,
       // l_waitMSB0: Wait until MSB of raster is 0
       0xAD, 0x11, 0xD0, 0x30, 0xFB,
       // l_wait2F: Wait for raster $2F
@@ -1400,18 +1400,24 @@ async function save(t) {
       0xB9, 0x00, 0x09, 0x8D, 0x11, 0xD0,
       0xB9, 0x00, 0x0A, 0x8D, 0x18, 0xD0,
       0xC8, 0xC0, 0xC8, 0xD0, 0xEF,
-      // Back to l_waitF8 ($0889 due to copy routine and added D018 init)
-      0x4C, 0x89, 0x08
+      // Back to l_waitF8 ($088B due to copy routine and added D018 init)
+      0x4C, 0x8B, 0x08
     ];
     f.set(ifliAsm, 14);
     const offset = addr => addr - 0x0801 + 2;
     for(let i=0; i<1000; i++) f[offset(0x1000)+i] = bmp[16000+i];
-    for(let i=0; i<8192; i++) {
-        f[offset(0x4000)+i] = bmp[8000+i]; 
-        f[offset(0x6000)+i] = i < 8000 ? bmp[i] : 0;      
-        f[offset(0x8000)+i] = bmp[17000+8000+i]; 
-        f[offset(0xA000)+i] = i < 8000 ? bmp[17000+i] : 0;      
+    for (let py = 0; py < 8; py++) {
+      for (let cIdx = 0; cIdx < 1000; cIdx++) {
+        f[offset(0x4000) + py * 1024 + cIdx] = bmp[8000 + py * 1000 + cIdx];
+      }
     }
+    for (let i = 0; i < 8000; i++) f[offset(0x6000) + i] = bmp[i];
+    for (let py = 0; py < 8; py++) {
+      for (let cIdx = 0; cIdx < 1000; cIdx++) {
+        f[offset(0x8000) + py * 1024 + cIdx] = bmp[17000 + 8000 + py * 1000 + cIdx];
+      }
+    }
+    for (let i = 0; i < 8000; i++) f[offset(0xA000) + i] = bmp[17000 + i];
     download(f, 'ifli.prg');
   } else if (t === 'PRG' && isFLI) {
     f = new Uint8Array(30721); // $0801 to $7FFF
@@ -1455,7 +1461,11 @@ async function save(t) {
     ];
     f.set(fliAsm, 14);
     // Screens @ $4000: Offset (0x4000 - 0x0801) + 2 = 14337
-    for(let i=0; i<8192; i++) f[14337+i] = bmp[8000+i];
+    for (let py = 0; py < 8; py++) {
+      for (let cIdx = 0; cIdx < 1000; cIdx++) {
+        f[14337 + py * 1024 + cIdx] = bmp[8000 + py * 1000 + cIdx];
+      }
+    }
     // Bitmap @ $6000: Offset (0x6000 - 0x0801) + 2 = 22529
     for(let i=0; i<8000; i++) f[22529+i] = bmp[i];
     // Color RAM temp storage @ $1000: Offset (0x1000 - 0x0801) + 2 = 2049
@@ -1524,10 +1534,18 @@ async function save(t) {
       prg.set(ifliAsm, 14);
       const off = a => a - 0x0801 + 2;
       for(let i=0; i<1000; i++) prg[off(0x1000)+i] = bmp[16000+i];
-      for(let i=0; i<8192; i++) {
-        prg[off(0x4000)+i] = bmp[8000+i]; prg[off(0x6000)+i] = i < 8000 ? bmp[i] : 0;
-        prg[off(0x8000)+i] = bmp[17000+8000+i]; prg[off(0xA000)+i] = i < 8000 ? bmp[17000+i] : 0;
+      for (let py = 0; py < 8; py++) {
+        for (let cIdx = 0; cIdx < 1000; cIdx++) {
+          prg[off(0x4000) + py * 1024 + cIdx] = bmp[8000 + py * 1000 + cIdx];
+        }
       }
+      for(let i=0; i<8000; i++) prg[off(0x6000)+i] = bmp[i];
+      for (let py = 0; py < 8; py++) {
+        for (let cIdx = 0; cIdx < 1000; cIdx++) {
+          prg[off(0x8000) + py * 1024 + cIdx] = bmp[17000 + 8000 + py * 1000 + cIdx];
+        }
+      }
+      for(let i=0; i<8000; i++) prg[off(0xA000)+i] = bmp[17000+i];
     } else if (isFLI) {
       prg = new Uint8Array(30721);
       prg[0] = 1; prg[1] = 8;
@@ -1543,7 +1561,11 @@ async function save(t) {
         0x4C,0x69,0x08
       ];
       prg.set(fliAsm, 14);
-      for(let i=0; i<8192; i++) prg[14337+i] = bmp[8000+i];
+      for (let py = 0; py < 8; py++) {
+        for (let cIdx = 0; cIdx < 1000; cIdx++) {
+          prg[14337 + py * 1024 + cIdx] = bmp[8000 + py * 1000 + cIdx];
+        }
+      }
       for(let i=0; i<8000; i++) prg[22529+i] = bmp[i];
       for(let i=0; i<1000; i++) prg[2049+i] = bmp[16000+i];
     } else {
@@ -1707,7 +1729,7 @@ async function upd() {
       for (let by = 0; by < 200; by++) {
         let charRow = Math.floor(by / 8);
         let py = by % 8;
-        let screenBank = py * 1024;
+        let screenBank = py * 1000;
         for (let bx = 0; bx < 40; bx++) {
           let cellIdx = charRow * 40 + bx;
           // Frame A
@@ -1745,7 +1767,7 @@ async function upd() {
       for (let by = 0; by < 200; by++) {
         let charRow = Math.floor(by / 8);
         let py = by % 8;
-        let screenBank = py * 1024;
+        let screenBank = py * 1000;
         for (let bx = 0; bx < 40; bx++) {
           let cellIdx = charRow * 40 + bx;
           let byte = d[cellIdx * 8 + py];

@@ -202,7 +202,7 @@ async function sendImageToC64() {
     
     // Build binary payload
     const payload = new Uint8Array(2 + latestScreenshot.bmpData.length);
-    payload[0] = latestScreenshot.isHires ? 1 : 0;
+    payload[0] = latestScreenshot.isHires ? 1 : (latestScreenshot.isIFLI ? 3 : (latestScreenshot.isFLI ? 2 : 0));
     payload[1] = currentBgColor || 0;
     payload.set(latestScreenshot.bmpData, 2);
     
@@ -263,7 +263,7 @@ async function toggleStream() {
         const rawBmp = new Uint8Array(await r.arrayBuffer());
         
         const payload = new Uint8Array(2 + rawBmp.length);
-        payload[0] = isHires ? 1 : 0;
+        payload[0] = isHires ? 1 : (isIFLI ? 3 : (isFLI ? 2 : 0));
         payload[1] = currentBgColor || 0;
         payload.set(rawBmp, 2);
         
@@ -538,33 +538,186 @@ async function save(t) {
       0x12, 0x9D, 0xEE, 0xDA, 0xE8, 0xE0, 0xFA, 0xD0, 0xE3, 0xA9, 0x3B, 0x8D, 0x11, 0xD0, 0xA9,
       0xD8, 0x8D, 0x16, 0xD0, 0xA9, currentBgColor, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0, 0xA9, 0x08, 0x8D,
       0x18, 0xD0, 0xA9, 0x02, 0x85, 0x02, 0xAD, 0x12, 0xD0, 0xC9, 0xF8, 0xD0, 0xF9, 0xA5, 0x02, 0x49,
-      0x02, 0x85, 0x02, 0x8D, 0x00, 0xDD, 0xAD, 0x11, 0xD0, 0x30, 0xFB, 0xAD, 0x12, 0xD0, 0xC9, 0x2F,
-      0xD0, 0xF9, 0xA2, 0x07, 0xCA, 0xD0, 0xFD, 0xEA, 0xA0, 0x00, 0xB9, 0x00, 0x0A, 0x8D, 0x11, 0xD0,
-      0xB9, 0x00, 0x09, 0x8D, 0x18, 0xD0, 0xC8, 0xC0, 0xC8, 0xD0, 0xEF, 0x4C, 0x8E, 0x08
+      0x03, 0x85, 0x02, 0x8D, 0x00, 0xDD, 0xAD, 0x11, 0xD0, 0x30, 0xFB, 0xAD, 0x12, 0xD0, 0xC9, 0x2F,
+      0xD0, 0xF9, 0xA2, 0x07, 0xCA, 0xD0, 0xFD, 0xEA, 0xA0, 0x00, 0xB9, 0x00, 0x09, 0x8D, 0x11, 0xD0,
+      0xB9, 0x00, 0x0A, 0x8D, 0x18, 0xD0, 0xC8, 0xC0, 0xC8, 0xD0, 0xEF, 0x4C, 0x91, 0x08
     ];
     f.set(asm, 14);
     for (let i = 0; i < 1000; i++) f[o(0x1000) + i] = rawBmp[16000 + i];
-    for (let i = 0; i < 8192; i++) {
-      f[o(0x4000) + i] = rawBmp[8000 + i];
-      f[o(0x6000) + i] = rawBmp[i];
-      f[o(0x8000) + i] = rawBmp[25000 + i];
-      f[o(0xA000) + i] = rawBmp[17000 + i];
+    for (let py = 0; py < 8; py++) {
+      for (let cIdx = 0; cIdx < 1000; cIdx++) {
+        f[o(0x4000) + py * 1024 + cIdx] = rawBmp[8000 + py * 1000 + cIdx];
+      }
     }
+    for (let i = 0; i < 8000; i++) f[o(0x6000) + i] = rawBmp[i];
+    for (let py = 0; py < 8; py++) {
+      for (let cIdx = 0; cIdx < 1000; cIdx++) {
+        f[o(0x8000) + py * 1024 + cIdx] = rawBmp[25000 + py * 1000 + cIdx];
+      }
+    }
+    for (let i = 0; i < 8000; i++) f[o(0xA000) + i] = rawBmp[17000 + i];
   } else if (isFLI) {
     const asm = [
-      0x78, 0xD8, 0xA9, 0x37, 0x85, 0x01, 0xA9, 0x03, 0x8D, 0x02, 0xDD, 0xA2, 0x00, 0x8A, 0x29, 0x07,
-      0x09, 0x38, 0x9D, 0x00, 0x09, 0x8A, 0x29, 0x07, 0x0A, 0x0A, 0x0A, 0x0A, 0x09, 0x08, 0x9D, 0x00,
-      0x0A, 0xE8, 0xE0, 0xC8, 0xD0, 0xE7, 0xA2, 0x00, 0xBD, 0x00, 0x10, 0x9D, 0x00, 0xD8, 0xBD, 0xFA,
-      0x10, 0x9D, 0xFA, 0xD8, 0xBD, 0xF4, 0x11, 0x9D, 0xF4, 0xD9, 0xBD, 0xEE, 0x12, 0x9D, 0xEE, 0xDA,
-      0xE8, 0xE0, 0xFA, 0xD0, 0xE3, 0xA9, 0x3B, 0x8D, 0x11, 0xD0, 0xA9, 0xD8, 0x8D, 0x16, 0xD0, 0xA9,
-      currentBgColor, 0x8D, 0x20, 0xD0, 0x8D, 0x21, 0xD0, 0xA9, 0x08, 0x8D, 0x18, 0xD0, 0xA9, 0x02, 0x8D,
-      0x00, 0xDD, 0xAD, 0x12, 0xD0, 0xC9, 0xF8, 0xD0, 0xF9, 0xAD, 0x11, 0xD0, 0x30, 0xFB, 0xAD, 0x12,
-      0xD0, 0xC9, 0x2F, 0xD0, 0xF9, 0xA2, 0x07, 0xCA, 0xD0, 0xFD, 0xEA, 0xA0, 0x00, 0xB9, 0x00, 0x0A,
-      0x8D, 0x18, 0xD0, 0xB9, 0x00, 0x09, 0x8D, 0x11, 0xD0, 0xC8, 0xC0, 0xC8, 0xD0, 0xEF, 0x4C, 0x6E, 0x08
+      0x78,        // SEI
+      0xD8,        // CLD
+      
+      // Set up VIC-II Bank 1
+      0xA9, 0x03,  // LDA #$03
+      0x8D, 0x02, 0xDD,  // STA $DD02
+      0xA9, 0x02,  // LDA #$02
+      0x8D, 0x00, 0xDD,  // STA $DD00
+      
+      // Set modes
+      0xA9, 0x3B,  // LDA #$3B
+      0x8D, 0x11, 0xD0,  // STA $D011
+      0xA9, 0xD8,  // LDA #$D8
+      0x8D, 0x16, 0xD0,  // STA $D016
+      0xA9, 0x08,  // LDA #$08
+      0x8D, 0x18, 0xD0,  // STA $D018
+      
+      // Background color
+      0xA9, currentBgColor,  // LDA #bg_color
+      0x8D, 0x20, 0xD0,  // STA $D020
+      0x8D, 0x21, 0xD0,  // STA $D021
+      
+      // Clear tables $0E00 and $0F00 for FLI
+      0xA2, 0x00,  // LDX #$00
+      // init_tables:
+      0x8A,        // TXA
+      0x29, 0x07,  // AND #$07
+      0x09, 0x38,  // ORA #$38
+      0x9D, 0x00, 0x0E,  // STA $0E00,X
+      
+      0x8A,        // TXA
+      0x29, 0x07,  // AND #$07
+      0x0A, 0x0A, 0x0A, 0x0A,  // ASL; ASL; ASL; ASL
+      0x09, 0x08,  // ORA #$08
+      0x9D, 0x00, 0x0F,  // STA $0F00,X
+      0xE8,        // INX
+      0xE0, 0xC8,  // CPX #$C8
+      0xD0, 0xE7,  // BNE init_tables
+      
+      // Copy Color RAM from $1000 to $D800 (1000 bytes)
+      0xA2, 0x00,  // LDX #$00
+      // copy_color:
+      0xBD, 0x00, 0x10,  // LDA $1000,X
+      0x9D, 0x00, 0xD8,  // STA $D800,X
+      0xBD, 0xFA, 0x10,  // LDA $10FA,X
+      0x9D, 0xFA, 0xD8,  // STA $D8FA,X
+      0xBD, 0xF4, 0x11,  // LDA $11F4,X
+      0x9D, 0xF4, 0xD9,  // STA $D9F4,X
+      0xBD, 0xEE, 0x12,  // LDA $12EE,X
+      0x9D, 0xEE, 0xDA,  // STA $DAEE,X
+      0xE8,        // INX
+      0xE0, 0xFA,  // CPX #$FA
+      0xD0, 0xE3,  // BNE copy_color
+      
+      // Disable CIA interrupts
+      0xA9, 0x7F,  // LDA #$7F
+      0x8D, 0x0D, 0xDC,  // STA $DC0D
+      0x8D, 0x0D, 0xDD,  // STA $DD0D
+      0xAD, 0x0D, 0xDC,  // LDA $DC0D
+      0xAD, 0x0D, 0xDD,  // LDA $DD0D
+      
+      // Set vectors in $0314-$0315 to irq1 ($089B)
+      0xA9, 0x9B,  // LDA #$9B
+      0x8D, 0x14, 0x03,  // STA $0314
+      0xA9, 0x08,  // LDA #$08
+      0x8D, 0x15, 0x03,  // STA $0315
+      
+      // Set raster line to $2D
+      0xA9, 0x2D,  // LDA #$2D
+      0x8D, 0x12, 0xD0,  // STA $D012
+      0xAD, 0x11, 0xD0,  // LDA $D011
+      0x29, 0x7F,  // AND #$7F
+      0x8D, 0x11, 0xD0,  // STA $D011
+      
+      // Enable VIC raster interrupt
+      0xA9, 0x01,  // LDA #$01
+      0x8D, 0x1A, 0xD0,  // STA $D01A
+      
+      // Clear VIC interrupts
+      0x0E, 0x19, 0xD0,  // ASL $D019
+      
+      // Enable interrupts
+      0x58,        // CLI
+      
+      // main_loop:
+      0x4C, 0x98, 0x08,  // JMP main_loop ($0898)
+      
+      // irq1: (offset $089B)
+      0xBA,        // TSX
+      
+      // Set vector to irq2 ($08C2)
+      0xA9, 0xC2,  // LDA #$C2
+      0x8D, 0x14, 0x03,  // STA $0314
+      0xA9, 0x08,  // LDA #$08
+      0x8D, 0x15, 0x03,  // STA $0315
+      
+      // Target next line $2E
+      0xEE, 0x12, 0xD0,  // INC $D012
+      
+      // Clear VIC interrupts
+      0x0E, 0x19, 0xD0,  // ASL $D019
+      
+      // Enable interrupts
+      0x58,        // CLI
+      
+      // NOPs to wait for next line (18 NOPs)
+      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+      
+      // Fallback exit via KERNAL
+      0x4C, 0x81, 0xEA,  // JMP $EA81
+      
+      // irq2: (offset $08BA)
+      0x9A,        // TXS
+      
+      // Delay of exactly 46 cycles (23 NOPs)
+      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+      
+      // Stabilizer
+      0xAD, 0x12, 0xD0,  // LDA $D012
+      0xCD, 0x12, 0xD0,  // CMP $D012
+      0xF0, 0x00,  // BEQ stable
+      // stable:
+      
+      // FLI loop
+      0xA0, 0x00,  // LDY #$00
+      // fli_loop:
+      0xB9, 0x00, 0x0E,  // LDA $0E00,Y
+      0x8D, 0x11, 0xD0,  // STA $D011
+      0xB9, 0x00, 0x0F,  // LDA $0F00,Y
+      0x8D, 0x18, 0xD0,  // STA $D018
+      0xC8,        // INY
+      0xC0, 0xC8,  // CPY #$C8
+      0xD0, 0xEF,  // BNE fli_loop
+      
+      // Reset vectors to irq1
+      0xA9, 0x9B,  // LDA #$9B
+      0x8D, 0x14, 0x03,  // STA $0314
+      0xA9, 0x08,  // LDA #$08
+      0x8D, 0x15, 0x03,  // STA $0315
+      
+      // Set raster line to $2D
+      0xA9, 0x2D,  // LDA #$2D
+      0x8D, 0x12, 0xD0,  // STA $D012
+      
+      // Clear VIC interrupts
+      0x0E, 0x19, 0xD0,  // ASL $D019
+      
+      // Exit via KERNAL
+      0x4C, 0x81, 0xEA  // JMP $EA81
     ];
     f.set(asm, 14);
     for (let i = 0; i < 1000; i++) f[o(0x1000) + i] = rawBmp[16000 + i];
-    for (let i = 0; i < 8192; i++) f[o(0x4000) + i] = rawBmp[8000 + i];
+    for (let py = 0; py < 8; py++) {
+      for (let cIdx = 0; cIdx < 1000; cIdx++) {
+        f[o(0x4000) + py * 1024 + cIdx] = rawBmp[8000 + py * 1000 + cIdx];
+      }
+    }
     for (let i = 0; i < 8000; i++) f[o(0x6000) + i] = rawBmp[i];
   } else {
     const asm = [
@@ -1883,8 +2036,8 @@ async function upd() {
     if (r && r.ok) {
       const d = new Uint8Array(await r.arrayBuffer()); 
       const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-      if (isIFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[34000]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, bA = d[cI * 8 + py], sA = d[8000 + sB + cI], cA = d[16000 + cI], clA = [bg, c64Pal[sA >> 4], c64Pal[sA & 15], c64Pal[cA & 15]], bB = d[17000 + cI * 8 + py], sB2 = d[25000 + sB + cI], cB = d[33000 + cI], clB = [bg, c64Pal[sB2 >> 4], c64Pal[sB2 & 15], c64Pal[cB & 15]]; for (let px = 0; px < 4; px++) { let coA = clA[(bA >> ((3 - px) * 2)) & 3], coB = clB[(bB >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = (coA[0] + coB[0]) >> 1; img.data[o + 1] = (coA[1] + coB[1]) >> 1; img.data[o + 2] = (coA[2] + coB[2]) >> 1; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
-      else if (isFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[17000]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let row = Math.floor(y / 8), py = y % 8, sB = py * 1024; for (let x = 0; x < 40; x++) { let cI = row * 40 + x, byte = d[cI * 8 + py], sBy = d[8000 + sB + cI], cBy = d[16000 + cI], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
+      if (isIFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[34000]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8, sB = py * 1000; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, bA = d[cI * 8 + py], sA = d[8000 + sB + cI], cA = d[16000 + cI], clA = [bg, c64Pal[sA >> 4], c64Pal[sA & 15], c64Pal[cA & 15]], bB = d[17000 + cI * 8 + py], sB2 = d[25000 + sB + cI], cB = d[33000 + cI], clB = [bg, c64Pal[sB2 >> 4], c64Pal[sB2 & 15], c64Pal[cB & 15]]; for (let px = 0; px < 4; px++) { let coA = clA[(bA >> ((3 - px) * 2)) & 3], coB = clB[(bB >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = (coA[0] + coB[0]) >> 1; img.data[o + 1] = (coA[1] + coB[1]) >> 1; img.data[o + 2] = (coA[2] + coB[2]) >> 1; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
+      else if (isFLI) { const img = ctx.createImageData(160, 200), bg = c64Pal[d[17000]] || [0, 0, 0]; for (let y = 0; y < 200; y++) { let row = Math.floor(y / 8), py = y % 8, sB = py * 1000; for (let x = 0; x < 40; x++) { let cI = row * 40 + x, byte = d[cI * 8 + py], sBy = d[8000 + sB + cI], cBy = d[16000 + cI], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else if (isHires) { const img = ctx.createImageData(320, 200); for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cI = cR * 40 + x, byte = d[cI * 8 + py], sBy = d[8000 + cI], fg = c64Pal[sBy >> 4], bg = c64Pal[sBy & 15]; for (let bit = 7; bit >= 0; bit--) { let px = x * 8 + (7 - bit), isF = (byte >> bit) & 1, c = isF ? fg : bg, o = (y * 320 + px) * 4; img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
       else { const img = ctx.createImageData(160, 200), bg = c64Pal[currentBgColor]; for (let y = 0; y < 200; y++) { let cR = Math.floor(y / 8), py = y % 8; for (let x = 0; x < 40; x++) { let cellIdx = cR * 40 + x, byte = d[cellIdx * 8 + py], sBy = d[8000 + cellIdx], cBy = d[9000 + cellIdx], cols = [bg, c64Pal[sBy >> 4], c64Pal[sBy & 15], c64Pal[cBy & 15]]; for (let px = 0; px < 4; px++) { let col = cols[(byte >> ((3 - px) * 2)) & 3], o = (y * 160 + x * 4 + px) * 4; img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = 255; } } } ctx.putImageData(img, 0, 0); }
     }  } catch (e) { }
