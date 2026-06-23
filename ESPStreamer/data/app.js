@@ -557,168 +557,181 @@ async function save(t) {
     }
     for (let i = 0; i < 8000; i++) f[o(0xA000) + i] = rawBmp[17000 + i];
   } else if (isFLI) {
-    const asm = [
-      0x78,        // SEI
-      0xD8,        // CLD
-      
-      // Set up VIC-II Bank 1
-      0xA9, 0x03,  // LDA #$03
-      0x8D, 0x02, 0xDD,  // STA $DD02
-      0xA9, 0x02,  // LDA #$02
-      0x8D, 0x00, 0xDD,  // STA $DD00
-      
-      // Set modes
-      0xA9, 0x3B,  // LDA #$3B
-      0x8D, 0x11, 0xD0,  // STA $D011
-      0xA9, 0xD8,  // LDA #$D8
-      0x8D, 0x16, 0xD0,  // STA $D016
-      0xA9, 0x08,  // LDA #$08
-      0x8D, 0x18, 0xD0,  // STA $D018
-      
-      // Background color
-      0xA9, currentBgColor,  // LDA #bg_color
-      0x8D, 0x20, 0xD0,  // STA $D020
-      0x8D, 0x21, 0xD0,  // STA $D021
-      
-      // Clear tables $0E00 and $0F00 for FLI
-      0xA2, 0x00,  // LDX #$00
-      // init_tables:
-      0x8A,        // TXA
-      0x29, 0x07,  // AND #$07
-      0x09, 0x38,  // ORA #$38
-      0x9D, 0x00, 0x0E,  // STA $0E00,X
-      
-      0x8A,        // TXA
-      0x29, 0x07,  // AND #$07
-      0x0A, 0x0A, 0x0A, 0x0A,  // ASL; ASL; ASL; ASL
-      0x09, 0x08,  // ORA #$08
-      0x9D, 0x00, 0x0F,  // STA $0F00,X
-      0xE8,        // INX
-      0xE0, 0xC8,  // CPX #$C8
-      0xD0, 0xE7,  // BNE init_tables
-      
-      // Copy Color RAM from $1000 to $D800 (1000 bytes)
-      0xA2, 0x00,  // LDX #$00
-      // copy_color:
-      0xBD, 0x00, 0x10,  // LDA $1000,X
-      0x9D, 0x00, 0xD8,  // STA $D800,X
-      0xBD, 0xFA, 0x10,  // LDA $10FA,X
-      0x9D, 0xFA, 0xD8,  // STA $D8FA,X
-      0xBD, 0xF4, 0x11,  // LDA $11F4,X
-      0x9D, 0xF4, 0xD9,  // STA $D9F4,X
-      0xBD, 0xEE, 0x12,  // LDA $12EE,X
-      0x9D, 0xEE, 0xDA,  // STA $DAEE,X
-      0xE8,        // INX
-      0xE0, 0xFA,  // CPX #$FA
-      0xD0, 0xE3,  // BNE copy_color
-      
-      // Disable CIA interrupts
-      0xA9, 0x7F,  // LDA #$7F
-      0x8D, 0x0D, 0xDC,  // STA $DC0D
-      0x8D, 0x0D, 0xDD,  // STA $DD0D
-      0xAD, 0x0D, 0xDC,  // LDA $DC0D
-      0xAD, 0x0D, 0xDD,  // LDA $DD0D
-      
-      // Set vectors in $0314-$0315 to irq1 ($089B)
-      0xA9, 0x9B,  // LDA #$9B
-      0x8D, 0x14, 0x03,  // STA $0314
-      0xA9, 0x08,  // LDA #$08
-      0x8D, 0x15, 0x03,  // STA $0315
-      
-      // Set raster line to $2D
-      0xA9, 0x2D,  // LDA #$2D
-      0x8D, 0x12, 0xD0,  // STA $D012
-      0xAD, 0x11, 0xD0,  // LDA $D011
-      0x29, 0x7F,  // AND #$7F
-      0x8D, 0x11, 0xD0,  // STA $D011
-      
-      // Enable VIC raster interrupt
-      0xA9, 0x01,  // LDA #$01
-      0x8D, 0x1A, 0xD0,  // STA $D01A
-      
-      // Clear VIC interrupts
-      0x0E, 0x19, 0xD0,  // ASL $D019
-      
-      // Enable interrupts
-      0x58,        // CLI
-      
-      // main_loop:
-      0x4C, 0x98, 0x08,  // JMP main_loop ($0898)
-      
-      // irq1: (offset $089B)
-      0xBA,        // TSX
-      
-      // Set vector to irq2 ($08C2)
-      0xA9, 0xC2,  // LDA #$C2
-      0x8D, 0x14, 0x03,  // STA $0314
-      0xA9, 0x08,  // LDA #$08
-      0x8D, 0x15, 0x03,  // STA $0315
-      
-      // Target next line $2E
-      0xEE, 0x12, 0xD0,  // INC $D012
-      
-      // Clear VIC interrupts
-      0x0E, 0x19, 0xD0,  // ASL $D019
-      
-      // Enable interrupts
-      0x58,        // CLI
-      
-      // NOPs to wait for next line (18 NOPs)
-      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
-      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
-      
-      // Fallback exit via KERNAL
-      0x4C, 0x81, 0xEA,  // JMP $EA81
-      
-      // irq2: (offset $08BA)
-      0x9A,        // TXS
-      
-      // Delay of exactly 46 cycles (23 NOPs)
-      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
-      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
-      0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
-      
-      // Stabilizer
-      0xAD, 0x12, 0xD0,  // LDA $D012
-      0xCD, 0x12, 0xD0,  // CMP $D012
-      0xF0, 0x00,  // BEQ stable
-      // stable:
-      
-      // FLI loop
-      0xA0, 0x00,  // LDY #$00
-      // fli_loop:
-      0xB9, 0x00, 0x0E,  // LDA $0E00,Y
-      0x8D, 0x11, 0xD0,  // STA $D011
-      0xB9, 0x00, 0x0F,  // LDA $0F00,Y
-      0x8D, 0x18, 0xD0,  // STA $D018
-      0xC8,        // INY
-      0xC0, 0xC8,  // CPY #$C8
-      0xD0, 0xEF,  // BNE fli_loop
-      
-      // Reset vectors to irq1
-      0xA9, 0x9B,  // LDA #$9B
-      0x8D, 0x14, 0x03,  // STA $0314
-      0xA9, 0x08,  // LDA #$08
-      0x8D, 0x15, 0x03,  // STA $0315
-      
-      // Set raster line to $2D
-      0xA9, 0x2D,  // LDA #$2D
-      0x8D, 0x12, 0xD0,  // STA $D012
-      
-      // Clear VIC interrupts
-      0x0E, 0x19, 0xD0,  // ASL $D019
-      
-      // Exit via KERNAL
-      0x4C, 0x81, 0xEA  // JMP $EA81
-    ];
-    f.set(asm, 14);
+    // ----------------------------------------------------------------
+    // FLI PRG — working routine proven in VICE 3.9
+    // Memory layout (VIC Bank 1, $4000-$7FFF):
+    //   $0900-$09C7 : D011 table (200 bytes)  forces bad-line per scanline
+    //   $0A00-$0AC7 : D018 table (200 bytes)  cycles screen pages
+    //   $1000-$13E7 : Color RAM (1000 bytes)  copied to $D800 at startup
+    //   $4000-$5FFF : Screen RAM pages 0-7    (8 × 1024 bytes, padded from 1000)
+    //   $6000-$7F3F : Bitmap RAM              (8000 bytes)
+    // PRG spans $0801-$7F40 = 30529 bytes
+    // ----------------------------------------------------------------
+    const PRG_SIZE = (0x7F40 - 0x0801) + 2;
+    const f = new Uint8Array(PRG_SIZE);
+
+    // Load address $0801 + BASIC stub: 10 SYS 2061 ($080D)
+    f[0] = 0x01; f[1] = 0x08;
+    f.set([0x0B, 0x08, 0x0A, 0x00, 0x9E, 0x32, 0x30, 0x36, 0x31, 0x00, 0x00, 0x00], 2);
+
+    // D011 table at $0900: bad-line scroll per line
+    // d011[Y] = $38 | (($33+Y) & 7)
+    for (let y = 0; y < 200; y++) f[o(0x0900) + y] = 0x38 | ((0x33 + y) & 7);
+
+    // D018 table at $0A00: screen page per line
+    // d018[Y] = (Y % 8) << 4 | $08
+    for (let y = 0; y < 200; y++) f[o(0x0A00) + y] = ((y % 8) << 4) | 0x08;
+
+    // Emit machine code dynamically (PC tracks current address)
+    let pc = 0x080D;
+    const emit = (...bytes) => { for (const b of bytes) { f[o(pc++)] = b & 0xFF; } };
+
+    // VIC Bank 1 setup (read-modify-write to preserve CIA port B)
+    emit(0x78);                          // SEI
+    emit(0xD8);                          // CLD
+    emit(0xAD, 0x00, 0xDD);             // LDA $DD00
+    emit(0x29, 0xFC);                    // AND #$FC
+    emit(0x09, 0x02);                    // ORA #$02
+    emit(0x8D, 0x00, 0xDD);             // STA $DD00
+    emit(0xAD, 0x02, 0xDD);             // LDA $DD02
+    emit(0x09, 0x03);                    // ORA #$03
+    emit(0x8D, 0x02, 0xDD);             // STA $DD02
+
+    // VIC modes: multicolor bitmap
+    emit(0xA9, 0x3B);                    // LDA #$3B  BMM=1 DEN=1 RSEL=1 yscroll=3
+    emit(0x8D, 0x11, 0xD0);             // STA $D011
+    emit(0xA9, 0x18);                    // LDA #$18  MCM=1 CSEL=1
+    emit(0x8D, 0x16, 0xD0);             // STA $D016
+    emit(0xA9, 0x08);                    // LDA #$08  screen@$4000 bitmap@$6000
+    emit(0x8D, 0x18, 0xD0);             // STA $D018
+
+    // Border + background color
+    emit(0xA9, currentBgColor & 0xF);   // LDA #bgColor
+    emit(0x8D, 0x20, 0xD0);             // STA $D020
+    emit(0x8D, 0x21, 0xD0);             // STA $D021
+
+    // Copy color RAM: $1000 -> $D800 (1000 bytes in 4 × 250-byte chunks)
+    emit(0xA2, 0x00);                    // LDX #$00
+    const copyLoop = pc;
+    emit(0xBD, 0x00, 0x10);             // LDA $1000,X
+    emit(0x9D, 0x00, 0xD8);             // STA $D800,X
+    emit(0xBD, 0xFA, 0x10);             // LDA $10FA,X
+    emit(0x9D, 0xFA, 0xD8);             // STA $D8FA,X
+    emit(0xBD, 0xF4, 0x11);             // LDA $11F4,X
+    emit(0x9D, 0xF4, 0xD9);             // STA $D9F4,X
+    emit(0xBD, 0xEE, 0x12);             // LDA $12EE,X
+    emit(0x9D, 0xEE, 0xDA);             // STA $DAEE,X
+    emit(0xE8);                          // INX
+    emit(0xE0, 0xFA);                    // CPX #$FA (250)
+    emit(0xD0, (copyLoop - (pc + 2)) & 0xFF); // BNE copyLoop
+
+    // Disable CIA interrupts
+    emit(0xA9, 0x7F);                    // LDA #$7F
+    emit(0x8D, 0x0D, 0xDC);             // STA $DC0D
+    emit(0x8D, 0x0D, 0xDD);             // STA $DD0D
+    emit(0xAD, 0x0D, 0xDC);             // LDA $DC0D  (clear pending)
+    emit(0xAD, 0x0D, 0xDD);             // LDA $DD0D
+
+    // Acknowledge any pending VIC interrupt
+    emit(0xA9, 0xFF);                    // LDA #$FF
+    emit(0x8D, 0x19, 0xD0);             // STA $D019
+
+    // Set raster IRQ to line $30 (just before visible area at $33)
+    emit(0xA9, 0x30);                    // LDA #$30
+    emit(0x8D, 0x12, 0xD0);             // STA $D012
+    emit(0xAD, 0x11, 0xD0);             // LDA $D011
+    emit(0x29, 0x7F);                    // AND #$7F  (clear raster bit 8)
+    emit(0x8D, 0x11, 0xD0);             // STA $D011
+
+    // Enable VIC raster interrupt
+    emit(0xA9, 0x01);                    // LDA #$01
+    emit(0x8D, 0x1A, 0xD0);             // STA $D01A
+
+    // Set IRQ vector to IRQ1 (14 bytes ahead: 10 vector + 1 CLI + 3 JMP)
+    const mainLoopAddr = pc;
+    const irq1Addr = mainLoopAddr + 14;
+    emit(0xA9, irq1Addr & 0xFF);         // LDA #lo(IRQ1)
+    emit(0x8D, 0x14, 0x03);              // STA $0314
+    emit(0xA9, (irq1Addr >> 8) & 0xFF);  // LDA #hi(IRQ1)
+    emit(0x8D, 0x15, 0x03);              // STA $0315
+    emit(0x58);                           // CLI
+    const realMain = pc;
+    emit(0x4C, realMain & 0xFF, (realMain >> 8) & 0xFF); // JMP main_loop
+
+    // ---- IRQ1: re-arm IRQ2 on the next raster line ----
+    const irq1Start = pc;
+    emit(0xA9, 0xFF);                    // LDA #$FF
+    emit(0x8D, 0x19, 0xD0);             // STA $D019  (ack)
+    emit(0xA9, 0x31);                    // LDA #$31   (next line)
+    emit(0x8D, 0x12, 0xD0);             // STA $D012
+    const irq2Addr = irq1Start + 23;     // IRQ2 is exactly 23 bytes after IRQ1
+    emit(0xA9, irq2Addr & 0xFF);         // LDA #lo(IRQ2)
+    emit(0x8D, 0x14, 0x03);              // STA $0314
+    emit(0xA9, (irq2Addr >> 8) & 0xFF);  // LDA #hi(IRQ2)
+    emit(0x8D, 0x15, 0x03);              // STA $0315
+    emit(0x4C, 0x81, 0xEA);              // JMP $EA81  (KERNAL exit)
+
+    // ---- IRQ2: double spin-wait then FLI loop ----
+    // Double spin: first catch $32, then $33.
+    // Ensures we land at cycle ~4-8 of $33 (RIGHT at the transition),
+    // so our first write happens AFTER $33's DMA ends (at ~cycle 54),
+    // preventing corruption of line 0. Line 0 is handled by setup:
+    //   $D011=$3B (scroll=3=$33&7 → bad-line) and $D018=$08 (page 0).
+    emit(0xA9, 0xFF);                    // LDA #$FF
+    emit(0x8D, 0x19, 0xD0);             // STA $D019  (ack)
+    const wait32 = pc;
+    emit(0xAD, 0x12, 0xD0);             // LDA $D012
+    emit(0xC9, 0x32);                    // CMP #$32
+    emit(0xD0, (wait32 - (pc + 2)) & 0xFF); // BNE wait32
+    const wait33 = pc;
+    emit(0xAD, 0x12, 0xD0);             // LDA $D012
+    emit(0xC9, 0x33);                    // CMP #$33
+    emit(0xD0, (wait33 - (pc + 2)) & 0xFF); // BNE wait33
+
+    // Start at Y=1 — line 0 (raster $33) is already handled by setup
+    emit(0xA0, 0x01);                    // LDY #$01
+
+    // FLI LOOP: exactly 23 cycles per iteration
+    //   LDA $0900,Y [4]  D011 value (bad-line scroll)
+    //   STA $D011   [4]
+    //   LDA $0A00,Y [4]  D018 value (screen page)
+    //   STA $D018   [4]
+    //   INY         [2]
+    //   CPY #$C8    [2]
+    //   BNE fliLoop [3]  = 23 cycles ✓ fits the 24-cycle CPU window
+    const fliLoop = pc;
+    emit(0xB9, 0x00, 0x09);             // LDA $0900,Y
+    emit(0x8D, 0x11, 0xD0);             // STA $D011
+    emit(0xB9, 0x00, 0x0A);             // LDA $0A00,Y
+    emit(0x8D, 0x18, 0xD0);             // STA $D018
+    emit(0xC8);                          // INY
+    emit(0xC0, 0xC8);                    // CPY #$C8
+    emit(0xD0, (fliLoop - (pc + 2)) & 0xFF); // BNE fliLoop
+
+    // Restore state and re-arm IRQ1 for next frame
+    emit(0xA9, 0x3B);                    // LDA #$3B
+    emit(0x8D, 0x11, 0xD0);             // STA $D011
+    emit(0xA9, 0x08);                    // LDA #$08
+    emit(0x8D, 0x18, 0xD0);             // STA $D018
+    emit(0xA9, 0x30);                    // LDA #$30
+    emit(0x8D, 0x12, 0xD0);             // STA $D012
+    emit(0xA9, irq1Addr & 0xFF);         // LDA #lo(IRQ1)
+    emit(0x8D, 0x14, 0x03);              // STA $0314
+    emit(0xA9, (irq1Addr >> 8) & 0xFF);  // LDA #hi(IRQ1)
+    emit(0x8D, 0x15, 0x03);              // STA $0315
+    emit(0x4C, 0x81, 0xEA);              // JMP $EA81
+
+    // --- Embed frame data ---
+    // Color RAM at $1000 ← rawBmp[16000..16999]
     for (let i = 0; i < 1000; i++) f[o(0x1000) + i] = rawBmp[16000 + i];
-    for (let py = 0; py < 8; py++) {
-      for (let cIdx = 0; cIdx < 1000; cIdx++) {
-        f[o(0x4000) + py * 1024 + cIdx] = rawBmp[8000 + py * 1000 + cIdx];
-      }
-    }
+    // Screen RAM pages 0-7 at $4000-$5FFF (1000 → 1024 byte padding)
+    for (let py = 0; py < 8; py++)
+      for (let ci = 0; ci < 1000; ci++)
+        f[o(0x4000) + py * 1024 + ci] = rawBmp[8000 + py * 1000 + ci];
+    // Bitmap at $6000 ← rawBmp[0..7999]
     for (let i = 0; i < 8000; i++) f[o(0x6000) + i] = rawBmp[i];
+
+    return download(f, 'fli.prg');
   } else {
     const asm = [
       0x78, 0xD8, 0xA9, 0x37, 0x85, 0x01, 0xA9, 0x03, 0x8D, 0x02, 0xDD, 0xA9, 0x03, 0x8D, 0x00, 0xDD,

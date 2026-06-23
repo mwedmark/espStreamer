@@ -520,20 +520,6 @@ def build_machine_code(d011_table, d018_table):
     emit(0xA9, 0xFF)          # LDA #$FF
     emit(0x8D, 0x19, 0xD0)   # STA $D019
     
-    # Wait for raster line $33 (start of visible screen area)
-    # Spin: CMP $D012 until it equals $33
-    # But $D012 may roll over, so this is safe for single-frame sync
-    wait_loop = pc
-    emit(0xAD, 0x12, 0xD0)   # LDA $D012
-    emit(0xC9, 0x33)          # CMP #$33
-    emit(0xD0, (wait_loop - (pc + 2)) & 0xFF)  # BNE wait_loop
-    # Now we're at the START of raster $33.
-    # But we have jitter from this loop. Let's add stabilization NOPs.
-    # The spin loop takes 4+2+2=8 cycles when branching, 4+2+2=8 when not.
-    # At the moment CMP passes, we're somewhere in raster $33.
-    # Add some NOPs then go straight into FLI.
-    # Actually, let's NOT try to be cycle-exact here yet.
-    # For a test image, we just need it to mostly work.
     # The FLI loop itself IS cycle-exact (23 cycles per line).
     
     # Set Y = 0 (line counter for FLI loop)
