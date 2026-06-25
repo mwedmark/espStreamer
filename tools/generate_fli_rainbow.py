@@ -519,11 +519,20 @@ def build_machine_code(d011_table, d018_table):
     # Acknowledge VIC interrupt
     emit(0xA9, 0xFF)          # LDA #$FF
     emit(0x8D, 0x19, 0xD0)   # STA $D019
-    
-    # The FLI loop itself IS cycle-exact (23 cycles per line).
-    
-    # Set Y = 0 (line counter for FLI loop)
-    emit(0xA0, 0x00)  # LDY #$00
+
+    # Double spin: wait for $32, then $33
+    wait32 = pc
+    emit(0xAD, 0x12, 0xD0)             # LDA $D012
+    emit(0xC9, 0x32)                    # CMP #$32
+    emit(0xD0, (wait32 - (pc + 2)) & 0xFF)  # BNE wait32
+
+    wait33 = pc
+    emit(0xAD, 0x12, 0xD0)             # LDA $D012
+    emit(0xC9, 0x33)                    # CMP #$33
+    emit(0xD0, (wait33 - (pc + 2)) & 0xFF)  # BNE wait33
+
+    emit(0xEA)                          # NOP (2 cycles) to shift write past cycle 14
+    emit(0xA0, 0x01)                    # LDY #$01  (Start at line 1)
     
     # ====================================================================
     # FLI LOOP - EXACTLY 23 CYCLES PER ITERATION (verified from FLI.md)

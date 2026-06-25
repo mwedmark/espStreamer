@@ -403,7 +403,7 @@ void packC64Frame() {
               }
               uint8_t bits = slots[0];
               if (ditherStrength > 0 && ditherAlgo > 0) {
-                int32_t bayer = (int32_t)getDitherOffset(cx*4 + px, py) * ditherStrength;
+                int32_t bayer = (int32_t)getDitherOffset(cx*4 + px, cy*8 + py) * ditherStrength;
                 if ((int32_t)dists[1] - bayer < (int32_t)dists[0] + bayer) bits = slots[1];
               }
               byte |= (bits << ((3 - px) * 2));
@@ -434,7 +434,7 @@ void packC64Frame() {
             uint8_t c = get_col((cy*8 + py)*320 + (cx*8 + px));
             int32_t dbg = (int32_t)manhattanDist(c, bg);
             int32_t dfg = (int32_t)manhattanDist(c, fg);
-            int32_t bayer = (ditherStrength > 0 && ditherAlgo > 0) ? (int32_t)getDitherOffset(px, py) * ditherStrength : 0;
+            int32_t bayer = (ditherStrength > 0 && ditherAlgo > 0) ? (int32_t)getDitherOffset(cx*8 + px, cy*8 + py) * ditherStrength : 0;
             
             if (dfg - bayer < dbg + bayer) byte |= (1 << (7 - px));
           }

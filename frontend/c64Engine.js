@@ -38,6 +38,14 @@ window.C64Engine = (function () {
                (Math.abs(b - pal.b[c2]));
     }
 
+    function getDitherOffset(tx, ty) {
+        if (da === 1) return b4[(ty & 3) * 4 + (tx & 3)];
+        if (da === 2) return b8[(ty & 7) * 8 + (tx & 7)];
+        if (da === 3) return Math.floor((Math.random() - 0.5) * 64);
+        if (da === 4) return blue[(ty & 7) * 8 + (tx & 7)];
+        return 0;
+    }
+
     function adjustColor(r, g, b) {
         r = (((r - 128) * cf) >> 8) + 128 + bv;
         g = (((g - 128) * cf) >> 8) + 128 + bv;
@@ -176,8 +184,8 @@ window.C64Engine = (function () {
                                 let d = [d0, d1, d2, d3], s = [0, 1, 2, 3];
                                 for (let a = 0; a < 2; a++) for (let k = a + 1; k < 4; k++) if (d[k] < d[a]) { [d[a], d[k]] = [d[k], d[a]]; [s[a], s[k]] = [s[k], s[a]]; }
                                 let bits = s[0];
-                                if (da > 0 && ds > 0) {
-                                    let thr = (da == 1 ? b4[(py % 4) * 4 + (cx * 4 + px) % 4] : b8[(py % 8) * 8 + (cx * 4 + px) % 8]) * ds;
+                                if (da > 0 && da < 5 && ds > 0) {
+                                    let thr = getDitherOffset(cx * 4 + px, cy * 8 + py) * ds;
                                     if (d[1] - thr < d[0] + thr) bits = s[1];
                                 }
                                 pb |= (bits << ((3 - px) * 2));
@@ -197,7 +205,7 @@ window.C64Engine = (function () {
                                 let rIdx = ((cy * 8 + py) * 320 + (cx * 8 + px)) * 3;
                                 let rVal = preAllocated.rgb[rIdx], gVal = preAllocated.rgb[rIdx + 1], bVal = preAllocated.rgb[rIdx + 2];
                                 let dB = dist(rVal, gVal, bVal, bg), dF = dist(rVal, gVal, bVal, fg);
-                                let thr = (da > 0 && ds > 0) ? (da == 1 ? b4[(py % 4) * 4 + px % 4] : b8[(py % 8) * 8 + px % 8]) * ds : 0;
+                                let thr = (da > 0 && da < 5 && ds > 0) ? getDitherOffset(cx * 8 + px, cy * 8 + py) * ds : 0;
                                 if (dF - thr < dB + thr) pb |= (1 << (7 - px));
                             }
                             b[base + cIdx * 8 + py] = pb;
@@ -219,8 +227,8 @@ window.C64Engine = (function () {
                                 let d = [d0, d1, d2, d3], s = [0, 1, 2, 3];
                                 for (let a = 0; a < 2; a++) for (let k = a + 1; k < 4; k++) if (d[k] < d[a]) { [d[a], d[k]] = [d[k], d[a]]; [s[a], s[k]] = [s[k], s[a]]; }
                                 let bits = s[0];
-                                if (da > 0 && ds > 0) {
-                                    let thr = (da == 1 ? b4[(cy * 8 + py) % 4 * 4 + (cx * 4 + px) % 4] : b8[(cy * 8 + py) % 8 * 8 + (cx * 4 + px) % 8]) * ds;
+                                if (da > 0 && da < 5 && ds > 0) {
+                                    let thr = getDitherOffset(cx * 4 + px, cy * 8 + py) * ds;
                                     if (d[1] - thr < d[0] + thr) bits = s[1];
                                 }
                                 pb |= (bits << ((3 - px) * 2));

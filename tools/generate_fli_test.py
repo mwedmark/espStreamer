@@ -437,13 +437,19 @@ def save_fli_prg(bitmap_ram, screens, color_ram, bg_color, out_path):
     emit(0xA9, 0xFF)                    # LDA #$FF
     emit(0x8D, 0x19, 0xD0)             # STA $D019  (ack VIC IRQ)
 
-    # Spin until raster $33 (first visible line)
-    wait_loop = pc
+    # Double spin: wait for $32, then $33
+    wait32 = pc
+    emit(0xAD, 0x12, 0xD0)             # LDA $D012
+    emit(0xC9, 0x32)                    # CMP #$32
+    emit(0xD0, (wait32 - (pc + 2)) & 0xFF)  # BNE wait32
+
+    wait33 = pc
     emit(0xAD, 0x12, 0xD0)             # LDA $D012
     emit(0xC9, 0x33)                    # CMP #$33
-    emit(0xD0, (wait_loop - (pc + 2)) & 0xFF)  # BNE wait_loop
+    emit(0xD0, (wait33 - (pc + 2)) & 0xFF)  # BNE wait33
 
-    emit(0xA0, 0x00)                    # LDY #$00  (line counter)
+    emit(0xEA)                          # NOP (2 cycles) to shift write past cycle 14
+    emit(0xA0, 0x01)                    # LDY #$01  (Start at line 1)
 
     # ----------------------------------------------------------------
     # FLI LOOP: exactly 23 cycles per iteration (fits 24-cycle window)

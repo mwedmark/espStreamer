@@ -18,13 +18,13 @@ _ZERO_MV = memoryview(_ZERO_BYTES)
 class FrameBufferPool:
     """Preallocated bytearrays to avoid GC pressure during streaming."""
     def __init__(self):
-        # Padded/page arrays (8192/1024/1024), payload buffers (11000/11000), chunk header (2)
+        # Padded/page arrays (8192/8192/1024), payload buffers (20000/20000), chunk header (2)
         self.bitmap_pages = bytearray(8192)
-        self.screen_pages = bytearray(1024)
+        self.screen_pages = bytearray(8192)
         self.color_pages = bytearray(1024)
         self.prev_color_pages = bytearray(1024)
-        self.payload = bytearray(11000)
-        self.delta_payload = bytearray(11000)
+        self.payload = bytearray(20000)
+        self.delta_payload = bytearray(20000)
         self.chunk_header = bytearray(2)
         
         # Pre-wrap them in memoryviews
@@ -259,10 +259,12 @@ class KungFuFlashSerial:
                 if bitmap_len < 8000:
                     self.pool.bitmap_pages[bitmap_len:8000] = _ZERO_MV[:8000 - bitmap_len]
 
-                screen_len = min(len(screen), 1000)
+                is_fli = (mode == 2)
+                max_screen_len = 8000 if is_fli else 1000
+                screen_len = min(len(screen), max_screen_len)
                 self.pool.screen_pages[:screen_len] = screen[:screen_len]
-                if screen_len < 1000:
-                    self.pool.screen_pages[screen_len:1000] = _ZERO_MV[:1000 - screen_len]
+                if screen_len < max_screen_len:
+                    self.pool.screen_pages[screen_len:max_screen_len] = _ZERO_MV[:max_screen_len - screen_len]
 
                 color_len = min(len(color), 1000)
                 self.pool.color_pages[:color_len] = color[:color_len]
@@ -273,7 +275,7 @@ class KungFuFlashSerial:
                 if mode_changed:
                     self.full_refresh_frames = max(self.full_refresh_frames, 2)
 
-                force_full_refresh = self.full_refresh_frames > 0
+                force_full_refresh = (self.full_refresh_frames > 0) or is_fli
 
                 # Compare prev_screen and prev_color directly without allocation
                 if self.prev_screen is None:
@@ -306,8 +308,8 @@ class KungFuFlashSerial:
 
                 payload_len = 8004
                 if send_screen:
-                    payload_buf[payload_len : payload_len + 1000] = self.pool.screen_pages[:1000]
-                    payload_len += 1000
+                    payload_buf[payload_len : payload_len + max_screen_len] = self.pool.screen_pages[:max_screen_len]
+                    payload_len += max_screen_len
                 if send_color:
                     payload_buf[payload_len : payload_len + 1000] = self.pool.color_pages[:1000]
                     payload_len += 1000
@@ -416,7 +418,7 @@ class KungFuFlashSerial:
                 self.bitmap_buffers[target_buffer][:] = self.pool.bitmap_pages
 
                 if self.screen_buffers[target_buffer] is None:
-                    self.screen_buffers[target_buffer] = bytearray(1024)
+                    self.screen_buffers[target_buffer] = bytearray(8192)
                     self.screen_buffers_mv[target_buffer] = memoryview(self.screen_buffers[target_buffer])
                 self.screen_buffers[target_buffer][:] = self.pool.screen_pages
 

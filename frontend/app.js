@@ -698,6 +698,7 @@ async function save(t) {
     emit(0xC9, 0x33);                    // CMP #$33
     emit(0xD0, (wait33 - (pc + 2)) & 0xFF); // BNE wait33
 
+    emit(0xEA);                          // NOP (2 cycles) to shift write past cycle 14
     // Start at Y=1 — line 0 (raster $33) is already handled by setup
     emit(0xA0, 0x01);                    // LDY #$01
 

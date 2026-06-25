@@ -531,12 +531,44 @@ def _build_streamer_code(base_addr):
     code += [0x29, 0x01]  # AND #$01
     beq_skip_screen = base_addr + len(code)
     code += [0xF0, 0x00]  # BEQ skip_screen
+    # Check if mode == 2 (FLI)
+    code += [0xAD, 0x00, 0x02]  # LDA $0200
+    code += [0xC9, 0x02]  # CMP #$02
+    bne_standard_screen = base_addr + len(code)
+    code += [0xD0, 0x00]  # BNE standard_screen
+
+    # FLI screen read: 8 loops of 1000 bytes to ($4000 + py * 1024)
+    code += [0xA9, 0x00, 0x85, 0x08]  # LDA #$00; STA $08
+    
+    fli_read_loop = base_addr + len(code)
+    # High byte of dest = $40 + index * 4
+    code += [0xA5, 0x08, 0x0A, 0x0A, 0x18, 0x69, 0x40, 0x85, 0xFD]
+    # Low byte of dest = $00
+    code += [0xA9, 0x00, 0x85, 0xFC]
+    # Read 1000 bytes: X = $E8, Y = $03
+    code += [0xA2, 0xE8, 0xA0, 0x03]
+    code += [0x20, fread8_addr & 0xFF, (fread8_addr >> 8) & 0xFF]
+    # Next page
+    code += [0xE6, 0x08]  # INC $08
+    code += [0xA5, 0x08, 0xC9, 0x08]  # LDA $08; CMP #$08
+    add_rel(code, 0xD0, fli_read_loop, base_addr + len(code))
+    
+    # Done with FLI screen read, JMP skip_screen
+    jmp_skip_screen = base_addr + len(code)
+    code += [0x4C, 0x00, 0x00]  # JMP skip_screen
+
+    # Standard multicolor/hires screen read (1000 bytes)
+    standard_screen_addr = base_addr + len(code)
+    code[bne_standard_screen - base_addr + 1] = (standard_screen_addr - (bne_standard_screen + 2)) & 0xFF
+    
     code += [0xA9, 0x00, 0x85, 0xFC]  # $FC = $00
     code += [0xA5, 0x07, 0x85, 0xFD]  # LDA $07; STA $FD
     code += [0xA2, 0xE8, 0xA0, 0x03]  # X = $E8, Y = $03 (1000 bytes)
     code += [0x20, fread8_addr & 0xFF, (fread8_addr >> 8) & 0xFF]
     skip_screen_addr = base_addr + len(code)
     code[beq_skip_screen - base_addr + 1] = (skip_screen_addr - (beq_skip_screen + 2)) & 0xFF
+    code[jmp_skip_screen - base_addr + 1] = skip_screen_addr & 0xFF
+    code[jmp_skip_screen - base_addr + 2] = (skip_screen_addr >> 8) & 0xFF
 
     code += [0xAD, 0x02, 0x02]  # LDA $0202
     code += [0x29, 0x02]  # AND #$02
@@ -556,6 +588,29 @@ def _build_streamer_code(base_addr):
     code += [0xAD, 0x01, 0x02]  # LDA $0201
     code += [0x8D, 0x21, 0xD0]  # STA $D021
     code += [0x8D, 0x20, 0xD0]  # STA $D020
+
+    # Check if mode == 2 (FLI)
+    code += [0xAD, 0x00, 0x02]  # LDA $0200
+    code += [0xC9, 0x02]  # CMP #$02
+    bne_not_fli = base_addr + len(code)
+    code += [0xD0, 0x00]  # BNE not_fli
+    
+    # FLI VIC-II setup
+    code += [0xA9, 0x3B, 0x8D, 0x11, 0xD0]  # LDA #$3B; STA $D011
+    code += [0xA9, 0x18, 0x8D, 0x16, 0xD0]  # LDA #$18; STA $D016
+    code += [0xA9, 0x08, 0x8D, 0x18, 0xD0]  # LDA #$08; STA $D018
+
+    # Select VIC Bank 1
+    code += [0xAD, 0x00, 0xDD]  # LDA $DD00
+    code += [0x29, 0xFC]        # AND #$FC
+    code += [0x09, 0x02]        # ORA #$02
+    code += [0x8D, 0x00, 0xDD]  # STA $DD00
+    
+    # JMP directly to main_loop (bypassing bank flipping)
+    code += [0x4C, main_loop_addr & 0xFF, (main_loop_addr >> 8) & 0xFF]
+
+    not_fli_addr = base_addr + len(code)
+    code[bne_not_fli - base_addr + 1] = (not_fli_addr - (bne_not_fli + 2)) & 0xFF
 
     code += [0xAD, 0x00, 0x02]  # LDA $0200
     code += [0xC9, 0x00]  # CMP #$00
