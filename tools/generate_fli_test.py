@@ -190,67 +190,97 @@ def encode_fli(img_320):
     color_ram = bytearray(1000)
     bg_color = 0  # Black background
 
-    # C64 FLI constraints packing loop
+    def color_dist(c1_idx, c2_idx):
+        """Weighted distance between two C64 palette colors."""
+        r1, g1, b1 = c64_colors[c1_idx]
+        r2, g2, b2 = c64_colors[c2_idx]
+        return abs(r1 - r2) * 2 + abs(g1 - g2) * 4 + abs(b1 - b2)
+
+    # C64 FLI constraints packing loop with optimal cC search
     for cy in range(25):
         for cx in range(40):
             cellIdx = cy * 40 + cx
 
-            # 1. Color RAM Selection: Most common color in 4x8 block (excluding bg)
-            counts = [0] * 16
+            # Collect pixel colors for this 4x8 cell
+            cell_colors = []
             for py in range(8):
+                row = []
                 for px in range(4):
-                    col = c64_indices[cy * 8 + py][cx * 4 + px]
-                    counts[col] += 1
-            counts[bg_color] = -1
-            cC = bg_color
-            max_count = -1
-            for i in range(16):
-                if counts[i] > max_count:
-                    max_count = counts[i]
-                    cC = i
-            if max_count <= 0:
-                cC = bg_color
+                    row.append(c64_indices[cy * 8 + py][cx * 4 + px])
+                cell_colors.append(row)
 
-            color_ram[cellIdx] = cC
+            # Exhaustive search: try all 16 possible cC values
+            best_cc_error = float('inf')
+            best_cc = bg_color
+            best_line_c1 = [bg_color] * 8
+            best_line_c2 = [bg_color] * 8
 
-            # 2. Screen RAM Selection per scanline
-            for py in range(8):
-                l_counts = [0] * 16
-                for px in range(4):
-                    col = c64_indices[cy * 8 + py][cx * 4 + px]
-                    l_counts[col] += 1
-                l_counts[bg_color] = -1
-                l_counts[cC] = -1
+            for cand_cc in range(16):
+                total_error = 0
+                tmp_c1 = [bg_color] * 8
+                tmp_c2 = [bg_color] * 8
 
-                # Find the two most common colors (c1 & c2) for this scanline segment
-                c1 = bg_color
-                c2 = bg_color
-                m1 = 0
-                m2 = 0
-                for i in range(16):
-                    if l_counts[i] > m1:
-                        m2 = m1
+                for py in range(8):
+                    # Count colors on this scanline, excluding bg and cand_cc
+                    counts = [0] * 16
+                    for px in range(4):
+                        counts[cell_colors[py][px]] += 1
+                    counts[bg_color] = -1
+                    if cand_cc != bg_color:
+                        counts[cand_cc] = -1
+
+                    # Find top-2 remaining colors for screen RAM
+                    c1 = bg_color
+                    c2 = bg_color
+                    m1 = 0
+                    m2 = 0
+                    for i in range(16):
+                        if counts[i] > m1:
+                            m2 = m1
+                            c2 = c1
+                            m1 = counts[i]
+                            c1 = i
+                        elif counts[i] > m2:
+                            m2 = counts[i]
+                            c2 = i
+
+                    if m1 == 0:
+                        c1 = cand_cc
+                    if m2 == 0:
                         c2 = c1
-                        m1 = l_counts[i]
-                        c1 = i
-                    elif l_counts[i] > m2:
-                        m2 = l_counts[i]
-                        c2 = i
 
-                if m1 == 0:
-                    c1 = cC
-                if m2 == 0:
-                    c2 = c1
+                    tmp_c1[py] = c1
+                    tmp_c2[py] = c2
 
+                    # Calculate total error for this scanline
+                    slots = [bg_color, c1, c2, cand_cc]
+                    for px in range(4):
+                        col = cell_colors[py][px]
+                        min_d = min(color_dist(col, s) for s in slots)
+                        total_error += min_d
+
+                if total_error < best_cc_error:
+                    best_cc_error = total_error
+                    best_cc = cand_cc
+                    best_line_c1 = tmp_c1[:]
+                    best_line_c2 = tmp_c2[:]
+
+            # Write Color RAM
+            color_ram[cellIdx] = best_cc
+
+            # Write Screen RAM and Bitmap for each scanline
+            for py in range(8):
+                c1 = best_line_c1[py]
+                c2 = best_line_c2[py]
                 screens[py * 1024 + cellIdx] = (c1 << 4) | (c2 & 0x0F)
 
-                # 3. Map the 4 pixels to the 2-bit color slots:
-                #    00 = bg_color, 01 = c1, 10 = c2, 11 = cC
-                slots = [bg_color, c1, c2, cC]
+                # Map the 4 pixels to the 2-bit color slots:
+                #    00 = bg_color, 01 = c1, 10 = c2, 11 = best_cc
+                slots = [bg_color, c1, c2, best_cc]
                 byte_val = 0
                 for px in range(4):
                     col = c64_indices[cy * 8 + py][cx * 4 + px]
-                    
+
                     # Find slot with best matching color
                     best_slot = 0
                     best_dist = 999999

@@ -147,32 +147,83 @@ window.C64Engine = (function () {
                 for (let cx = 0; cx < 40; cx++) {
                     let cIdx = cy * 40 + cx;
                     if (isF) {
-                        // FLI Logic: 8 screens starting at base + 8000, color ram at base + 16000
-                        const cnts = preAllocated.cnts; cnts.fill(0);
-                        for (let py = 0; py < 8; py++) for (let px = 0; px < 4; px++) cnts[getCol((cy * 8 + py) * 160 + (cx * 4 + px))]++;
-                        cnts[bgC] = -1; let cC = bgC, mcC = -1;
-                        for (let i = 0; i < 16; i++) if (cnts[i] > mcC) { mcC = cnts[i]; cC = i; }
-                        if (mcC <= 0) cC = bgC;
-                        else if (isI) cC = 1;
-                        b[base + 16000 + cIdx] = cC;
-
+                        // FLI Logic: optimal Color RAM selection via exhaustive search
+                        // Try all 16 possible cC values, pick the one that minimizes total
+                        // quantization error when combined with optimal per-scanline c1/c2.
+                        
+                        // Collect pixel colors for this 4x8 cell
+                        const cellColors = new Uint8Array(32); // 8 rows x 4 pixels
+                        const cellRGB = new Float32Array(96);  // 8 rows x 4 pixels x 3 channels
                         for (let py = 0; py < 8; py++) {
-                            const lc = preAllocated.lc; lc.fill(0);
-                            for (let px = 0; px < 4; px++) lc[getCol((cy * 8 + py) * 160 + (cx * 4 + px))]++;
-                            lc[bgC] = -1; lc[cC] = -1;
-                            let c1 = bgC, c2 = bgC, m1 = 0, m2 = 0;
-                            for (let i = 0; i < 16; i++) {
-                                if (lc[i] > m1) { m2 = m1; c2 = c1; m1 = lc[i]; c1 = i; }
-                                else if (lc[i] > m2) { m2 = lc[i]; c2 = i; }
+                            for (let px = 0; px < 4; px++) {
+                                const srcIdx = (cy * 8 + py) * 160 + (cx * 4 + px);
+                                cellColors[py * 4 + px] = getCol(srcIdx);
+                                const rIdx = srcIdx * 3;
+                                cellRGB[(py * 4 + px) * 3]     = preAllocated.rgb[rIdx];
+                                cellRGB[(py * 4 + px) * 3 + 1] = preAllocated.rgb[rIdx + 1];
+                                cellRGB[(py * 4 + px) * 3 + 2] = preAllocated.rgb[rIdx + 2];
                             }
-                            if (m1 === 0) c1 = cC; if (m2 === 0) c2 = c1;
+                        }
+                        
+                        let bestCCError = Infinity, bestCC = bgC;
+                        const bestLineC1 = new Uint8Array(8);
+                        const bestLineC2 = new Uint8Array(8);
+                        
+                        for (let candCC = 0; candCC < 16; candCC++) {
+                            let totalError = 0;
+                            const tmpC1 = new Uint8Array(8);
+                            const tmpC2 = new Uint8Array(8);
+                            
+                            for (let py = 0; py < 8; py++) {
+                                const lc = preAllocated.lc; lc.fill(0);
+                                for (let px = 0; px < 4; px++) lc[cellColors[py * 4 + px]]++;
+                                lc[bgC] = -1;
+                                if (candCC !== bgC) lc[candCC] = -1;
+                                
+                                let c1 = bgC, c2 = bgC, m1 = 0, m2 = 0;
+                                for (let i = 0; i < 16; i++) {
+                                    if (lc[i] > m1) { m2 = m1; c2 = c1; m1 = lc[i]; c1 = i; }
+                                    else if (lc[i] > m2) { m2 = lc[i]; c2 = i; }
+                                }
+                                if (m1 === 0) c1 = candCC;
+                                if (m2 === 0) c2 = c1;
+                                
+                                tmpC1[py] = c1;
+                                tmpC2[py] = c2;
+                                
+                                for (let px = 0; px < 4; px++) {
+                                    const ri = (py * 4 + px) * 3;
+                                    const rV = cellRGB[ri], gV = cellRGB[ri + 1], bV = cellRGB[ri + 2];
+                                    const d0 = dist(rV, gV, bV, bgC);
+                                    const d1 = dist(rV, gV, bV, c1);
+                                    const d2 = dist(rV, gV, bV, c2);
+                                    const d3 = dist(rV, gV, bV, candCC);
+                                    totalError += Math.min(d0, d1, d2, d3);
+                                }
+                            }
+                            
+                            if (totalError < bestCCError) {
+                                bestCCError = totalError;
+                                bestCC = candCC;
+                                bestLineC1.set(tmpC1);
+                                bestLineC2.set(tmpC2);
+                            }
+                        }
+                        
+                        b[base + 16000 + cIdx] = bestCC;
+                        
+                        for (let py = 0; py < 8; py++) {
+                            const c1 = bestLineC1[py], c2 = bestLineC2[py];
                             b[base + 8000 + py * 1000 + cIdx] = (c1 << 4) | (c2 & 15);
-
+                            
                             let pb = 0;
                             for (let px = 0; px < 4; px++) {
-                                let rIdx = ((cy * 8 + py) * 160 + (cx * 4 + px)) * 3;
-                                let rVal = preAllocated.rgb[rIdx], gVal = preAllocated.rgb[rIdx + 1], bVal = preAllocated.rgb[rIdx + 2];
-                                let d0 = dist(rVal, gVal, bVal, bgC), d1 = dist(rVal, gVal, bVal, c1), d2 = dist(rVal, gVal, bVal, c2), d3 = dist(rVal, gVal, bVal, cC);
+                                const ri = (py * 4 + px) * 3;
+                                const rVal = cellRGB[ri], gVal = cellRGB[ri + 1], bVal = cellRGB[ri + 2];
+                                const d0 = dist(rVal, gVal, bVal, bgC);
+                                const d1 = dist(rVal, gVal, bVal, c1);
+                                const d2 = dist(rVal, gVal, bVal, c2);
+                                const d3 = dist(rVal, gVal, bVal, bestCC);
                                 let d = [d0, d1, d2, d3], s = [0, 1, 2, 3];
                                 for (let a = 0; a < 2; a++) for (let k = a + 1; k < 4; k++) if (d[k] < d[a]) { [d[a], d[k]] = [d[k], d[a]]; [s[a], s[k]] = [s[k], s[a]]; }
                                 let bits = s[0];
