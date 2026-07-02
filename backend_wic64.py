@@ -60,7 +60,7 @@ class WIC64Backend(StreamingBackend):
 
         self.frame_count = 0
         self.bytes_sent = 0
-        self.delta_threshold = 0.0
+        self.delta_threshold = 0.90
         self.total_ratio_sum = 0.0
         self.ratio_count = 0
         self.connection_start_time = None
@@ -323,9 +323,22 @@ class WIC64Backend(StreamingBackend):
                             send_chunk_and_wait_ack("color", payload_view[curr_offset : curr_offset + 1000])
                             curr_offset += 1000
                     else:
-                        print("WIC-64 DEBUG: sending delta payload...")
-                        self.client_sock.sendall(payload_view)
-                        print("WIC-64 DEBUG: delta payload sent.")
+                        num_bitmap_pages = payload_view[3]
+                        num_screen_pages = payload_view[4]
+                        num_color_pages = payload_view[5]
+                        total_pages = num_bitmap_pages + num_screen_pages + num_color_pages
+                        
+                        send_chunk_and_wait_ack("delta_header", payload_view[0:4])
+                        send_chunk_and_wait_ack("delta_ext_header", payload_view[4:8])
+                        
+                        curr_offset = 8
+                        for p_idx in range(total_pages):
+                            # Send page header (4 bytes)
+                            send_chunk_and_wait_ack(f"page_{p_idx}_header", payload_view[curr_offset : curr_offset + 4])
+                            curr_offset += 4
+                            # Send page data (256 bytes)
+                            send_chunk_and_wait_ack(f"page_{p_idx}_data", payload_view[curr_offset : curr_offset + 256])
+                            curr_offset += 256
                 except Exception as socket_err:
                     print(f"WIC-64 socket send failed: {socket_err}. Client disconnected.")
                     try:
