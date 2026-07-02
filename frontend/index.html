@@ -432,14 +432,21 @@
     <div id="stats"><span class="dot" id="dot"></span><span id="stxt">Booting Diagnostic Engine...</span></div>
   </div>
   
-  <!-- Kung Fu Flash Controls -->
+  <!-- C64 Link Controls -->
   <div class="container">
-    <h2>KUNG FU FLASH</h2>
+    <h2 id="link-title">C64 HARDWARE LINK</h2>
     <div class="controls">
-      <button onclick="toggleViceMode()" class="btn" id="vice-mode-btn">Hardware Mode</button>
+      <span style="color:#a0b4ff; display:flex; align-items:center;">Link:</span>
+      <select id="link-sel" onchange="changeLinkType()">
+        <option value="kff">Kung Fu Flash</option>
+        <option value="vice">VICE Emulator</option>
+        <option value="wic64">WIC-64 WiFi</option>
+      </select>
+      <span style="color:#a0b4ff; display:flex; align-items:center;">Port:</span>
+      <input id="server-port" type="number" value="8765" style="font-family:'Share Tech Mono',monospace; font-size:13px; padding:4px 8px; background:rgba(0,0,0,0.4); color:#a0ffb0; border:1px solid rgba(100, 140, 255, 0.4); border-radius:4px; width:70px; outline:none; font-weight:bold;">
       <button onclick="connectKungFuFlash()" class="btn">Connect</button>
-      <button onclick="sendKFFViewer()" class="btn" style="background: rgba(100,255,255,0.1); border-color:#40d4d4;">Send Viewer via USB</button>
-      <button onclick="downloadKFFViewer()" class="btn" style="background: rgba(255,255,100,0.1); border-color:#d4d440;">Download KFF Viewer PRG</button>
+      <button id="btn-send-viewer" onclick="sendKFFViewer()" class="btn" style="background: rgba(100,255,255,0.1); border-color:#40d4d4;">Send Viewer via USB</button>
+      <button id="btn-download-viewer" onclick="downloadKFFViewer()" class="btn" style="background: rgba(255,255,100,0.1); border-color:#d4d440;">Download Viewer PRG</button>
       <button onclick="sendImageToC64()" class="btn" id="stream-btn">Send Image</button>
       <button onclick="toggleStream()" class="btn" id="stream-toggle-btn">Start Stream</button>
       <button onclick="disconnectKungFuFlash()" class="btn">Disconnect</button>
@@ -447,9 +454,15 @@
       <span id="kungfu-fps" style="margin-left: 10px; color: #a0ff90; font-weight: bold; display: none;">FPS: 0.0</span>
       <a id="dashboard-link" href="http://localhost:8765/dashboard" target="_blank" style="margin-left: 15px; color: #a87fff; text-decoration: none; border: 1px solid rgba(168, 127, 255, 0.4); padding: 4px 10px; border-radius: 6px; font-size: 12px; display: none; transition: all 0.2s;">&#x1F4CA; Open Monitor Dashboard</a>
     </div>
-    <div style="margin-top: 10px; font-size: 12px; color: #7088cc;">
-      <span id="vice-mode" style="color: #40ff40;">Hardware Mode</span>: Stream to real C64 via Kung Fu Flash cartridge | 
-      <span id="vice-help">VICE Mode</span>: Test with VICE emulator simulation
+    <div id="link-info-text" style="margin-top: 10px; font-size: 12px; color: #7088cc;">
+      Stream to real C64 via Kung Fu Flash cartridge CDC Serial interface.
+    </div>
+    
+    <div id="wic64-instructions" style="display:none; margin-top:15px; padding:12px; background:rgba(100,140,255,0.1); border:1px dashed rgba(100,140,255,0.3); border-radius:8px; font-size:13px; line-height:1.5;">
+      <span style="color:#80ffcc; font-weight:bold;">WIC-64 Bootstrap Instruction:</span><br>
+      To load and run the viewer on your C64, type this command in BASIC:<br>
+      <code id="wic64-cmd-text" style="color:#ffd080; font-weight:bold; background:rgba(0,0,0,0.3); padding:2px 6px; border-radius:4px; display:inline-block; margin-top:5px;">LOAD "http://127.0.0.1:8765/wic64_viewer.prg",137</code><br>
+      Then type <code style="color:#ffd080; font-weight:bold;">RUN</code>. The server will dynamically compile your local IP into the viewer.
     </div>
   </div>
 

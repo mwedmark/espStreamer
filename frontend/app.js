@@ -51,22 +51,66 @@ function updateLimitYText() { document.getElementById('lyval').innerText = docum
 function sendLimitY() { sendSettingWithC64Reset('/setlimity?y=' + document.getElementById('limitY').value, 'limit Y'); }
 function download(d, n) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([d])); a.download = n; a.click(); }
 
-// Kung Fu Flash WebSocket functions
+// C64 Hardware Link WebSocket functions
+function changeLinkType() {
+  const linkType = document.getElementById('link-sel').value;
+  const portInput = document.getElementById('server-port');
+  const infoText = document.getElementById('link-info-text');
+  const wicInst = document.getElementById('wic64-instructions');
+  const sendBtn = document.getElementById('btn-send-viewer');
+  const dlBtn = document.getElementById('btn-download-viewer');
+
+  if (linkType === 'kff') {
+    portInput.value = '8765';
+    infoText.textContent = 'Stream to real C64 via Kung Fu Flash cartridge CDC Serial interface.';
+    wicInst.style.display = 'none';
+    sendBtn.style.display = 'inline-block';
+    dlBtn.style.display = 'inline-block';
+    dlBtn.textContent = 'Download Viewer PRG';
+  } else if (linkType === 'vice') {
+    portInput.value = '8766';
+    infoText.textContent = 'Test and simulate streaming using VICE emulator binary monitor port.';
+    wicInst.style.display = 'none';
+    sendBtn.style.display = 'none';
+    dlBtn.style.display = 'none';
+  } else if (linkType === 'wic64') {
+    portInput.value = '8765';
+    infoText.textContent = 'Stream to C64 wirelessly via WIC-64 parallel User Port WiFi module.';
+    wicInst.style.display = 'block';
+    sendBtn.style.display = 'none';
+    dlBtn.style.display = 'inline-block';
+    dlBtn.textContent = 'Download WIC-64 PRG';
+    
+    // Update command text
+    const host = window.location.hostname || '127.0.0.1';
+    const port = portInput.value;
+    document.getElementById('wic64-cmd-text').textContent = `LOAD "http://${host}:${port}/wic64_viewer.prg",137`;
+  }
+  
+  if (kungFuWebSocket) {
+    disconnectKungFuFlash();
+  }
+}
+
 async function connectKungFuFlash() {
   try {
-    // Choose server based on mode
-    const port = kungFuViceMode ? 8766 : 8765;
-    const serverName = kungFuViceMode ? 'VICE Simulation' : 'Kung Fu Flash';
+    const port = parseInt(document.getElementById('server-port').value) || 8765;
+    const linkType = document.getElementById('link-sel').value;
+    const serverName = linkType === 'kff' ? 'Kung Fu Flash' : (linkType === 'vice' ? 'VICE Simulation' : 'WIC-64 WiFi');
     
-    kungFuWebSocket = new WebSocket(`ws://localhost:${port}`);
+    const host = window.location.hostname || 'localhost';
+    kungFuWebSocket = new WebSocket(`ws://${host}:${port}`);
     
     kungFuWebSocket.onopen = function() {
       void 0;
       kungFuConnected = true;
-      updateKungFuStatus('Connecting to USB...', true);
-      
-      // Request connection to COM port
-      kungFuWebSocket.send(JSON.stringify({command: 'connect'}));
+      if (linkType === 'wic64') {
+        updateKungFuStatus('WiFi Connected', true);
+      } else {
+        updateKungFuStatus('Connecting to USB...', true);
+        // Request connection to COM port
+        kungFuWebSocket.send(JSON.stringify({command: 'connect'}));
+      }
     };
     
     kungFuWebSocket.onmessage = function(event) {
@@ -92,6 +136,14 @@ async function connectKungFuFlash() {
 }
 
 async function downloadKFFViewer() {
+  const linkType = document.getElementById('link-sel').value;
+  if (linkType === 'wic64') {
+    const port = document.getElementById('server-port').value || 8765;
+    const host = window.location.hostname || '127.0.0.1';
+    window.open(`http://${host}:${port}/wic64_viewer.prg`, '_blank');
+    return;
+  }
+
   if (!kungFuWebSocket || kungFuWebSocket.readyState !== WebSocket.OPEN) {
     alert('Not connected to Kung Fu Flash server. Please click Connect first.');
     return;
@@ -109,25 +161,6 @@ async function sendKFFViewer() {
   
   updateKungFuStatus('Sending Viewer PRG to C64...', true);
   kungFuWebSocket.send(JSON.stringify({command: 'send_viewer'}));
-}
-
-function toggleViceMode() {
-  kungFuViceMode = !kungFuViceMode;
-  const modeText = kungFuViceMode ? 'VICE Mode' : 'Hardware Mode';
-  const modeColor = kungFuViceMode ? '#ff8040' : '#40ff40';
-  
-  const modeElement = document.getElementById('vice-mode');
-  if (modeElement) {
-    modeElement.textContent = modeText;
-    modeElement.style.color = modeColor;
-  }
-  
-  // Disconnect if connected
-  if (kungFuWebSocket) {
-    disconnectKungFuFlash();
-  }
-  
-  updateKungFuStatus(`Ready for ${modeText}`, false);
 }
 
 function handleKungFuResponse(response) {
@@ -182,8 +215,9 @@ function updateKungFuStatus(status, connected) {
   const dashLink = document.getElementById('dashboard-link');
   if (dashLink) {
     if (connected) {
-      const port = kungFuViceMode ? 8766 : 8765;
-      dashLink.href = `http://localhost:${port}/dashboard`;
+      const port = parseInt(document.getElementById('server-port').value) || 8765;
+      const host = window.location.hostname || 'localhost';
+      dashLink.href = `http://${host}:${port}/dashboard`;
       dashLink.style.display = 'inline-block';
     } else {
       dashLink.style.display = 'none';
@@ -1943,7 +1977,7 @@ async function upd() {
 document.getElementById('btn-backend-esp')?.addEventListener('click', () => setBackendMode('esp'));
 document.getElementById('btn-backend-pc')?.addEventListener('click', () => setBackendMode('pc'));
 
-setBackendMode('pc'); updateModeUI(); updateButtonStates(); upd();
+setBackendMode('pc'); updateModeUI(); updateButtonStates(); changeLinkType(); upd();
 
 // Add fullscreen double-click handler for C64 canvas wrapper
 document.getElementById('c-wrap').addEventListener('dblclick', function() {

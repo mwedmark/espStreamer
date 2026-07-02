@@ -225,6 +225,7 @@ class UnifiedWebSocketServer:
 
     async def _handle_binary_frame(self, websocket, message: bytes):
         """Handle binary frame streaming."""
+        print(f"WS DEBUG: Received binary frame of size {len(message)}")
         if len(message) < 10002:
             print(f"Binary payload too small: {len(message)}")
             return
@@ -247,6 +248,7 @@ class UnifiedWebSocketServer:
             self.fps_tracker.tick()
             try:
                 loop = asyncio.get_event_loop()
+                print("WS DEBUG: Invoking backend.stream_frame...")
                 success = await loop.run_in_executor(
                     None,
                     self.backend.stream_frame,
@@ -256,6 +258,7 @@ class UnifiedWebSocketServer:
                     screen,
                     color,
                 )
+                print(f"WS DEBUG: backend.stream_frame completed, success = {success}")
                 if not success:
                     self.error_count += 1
             except Exception as e:
@@ -889,13 +892,56 @@ class UnifiedWebSocketServer:
         path_only = parsed_url.path
         query_params = parse_qs(parsed_url.query)
 
-        if path_only not in ("/status", "/metrics", "/dashboard", "/image", "/koa"):
+        if path_only not in ("/status", "/metrics", "/dashboard", "/image", "/koa", "/wic64_viewer.prg"):
             return None
 
         try:
             status_code = 200
             is_binary = False
-            if path_only in ("/image", "/koa"):
+            if path_only == "/wic64_viewer.prg":
+                # Determine C64 stream server IP
+                host_val = None
+                if is_new_signature and request:
+                    host_val = request.headers.get("Host") or request.headers.get("host")
+                elif len(args) >= 2:
+                    headers = args[1]
+                    if hasattr(headers, "get"):
+                        host_val = headers.get("Host") or headers.get("host")
+                    elif isinstance(headers, list):
+                        for k, v in headers:
+                            if k.lower() == "host":
+                                host_val = v
+                                break
+                
+                host_ip = "127.0.0.1"
+                if host_val:
+                    if ":" in host_val:
+                        host_ip = host_val.split(":")[0]
+                    else:
+                        host_ip = host_val
+                else:
+                    # Fallback to local IP address
+                    import socket
+                    try:
+                        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        s.connect(("8.8.8.8", 80))
+                        host_ip = s.getsockname()[0]
+                        s.close()
+                    except:
+                        host_ip = "127.0.0.1"
+
+                # Get WIC-64 TCP streaming port from the backend if it has it
+                stream_port = 8768
+                if hasattr(self.backend, "listen_port"):
+                    stream_port = self.backend.listen_port
+
+                print(f"Compiling WIC-64 viewer PRG targeting {host_ip}:{stream_port}")
+                from streamer_machinecode import build_wic64_viewer_prg
+                response_body = build_wic64_viewer_prg(host_ip, stream_port)
+                status_code = 200
+                content_type = "application/octet-stream"
+                is_binary = True
+            elif path_only in ("/image", "/koa"):
                 fmt = "koa"
                 if "format" in query_params:
                     fmt = query_params["format"][0].lower()
@@ -954,7 +1000,8 @@ class UnifiedWebSocketServer:
                 response.headers["Content-Length"] = str(len(response.body))
                 response.headers["Access-Control-Allow-Origin"] = "*"
                 if is_binary and status_code == 200:
-                    response.headers["Content-Disposition"] = 'attachment; filename="image.koa"'
+                    filename = "wic64_viewer.prg" if path_only == "/wic64_viewer.prg" else "image.koa"
+                    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
                 return response
             else:
                 # Older websockets expects a 3-tuple: (status, headers, body_bytes)
@@ -964,7 +1011,8 @@ class UnifiedWebSocketServer:
                     ("Access-Control-Allow-Origin", "*"),
                 ]
                 if is_binary and status_code == 200:
-                    response_headers.append(("Content-Disposition", 'attachment; filename="image.koa"'))
+                    filename = "wic64_viewer.prg" if path_only == "/wic64_viewer.prg" else "image.koa"
+                    response_headers.append(("Content-Disposition", f'attachment; filename="{filename}"'))
                 return status_code, response_headers, response_body
 
         except Exception as e:
@@ -994,6 +1042,28 @@ async def start_server(
     port: int = 8765,
 ):
     """Start the unified WebSocket server."""
+    # Pre-compile and save the wic64_viewer.prg to disk for easy drag-and-drop
+    try:
+        from streamer_machinecode import build_wic64_viewer_prg
+        stream_port = getattr(backend, "listen_port", 8768)
+        # Determine a reasonable host IP to burn into the offline PRG
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            offline_ip = s.getsockname()[0]
+            s.close()
+        except:
+            offline_ip = "127.0.0.1"
+            
+        print(f"Pre-compiling WIC-64 viewer PRG targeting offline IP {offline_ip}:{stream_port}")
+        prg_bytes = build_wic64_viewer_prg(offline_ip, stream_port)
+        with open("wic64_viewer.prg", "wb") as f:
+            f.write(prg_bytes)
+        print("Successfully saved updated wic64_viewer.prg to disk.")
+    except Exception as e:
+        print(f"Warning: Failed to pre-compile and save wic64_viewer.prg to disk: {e}")
+
     server = UnifiedWebSocketServer(backend, backend_name)
 
     print("=" * 60)

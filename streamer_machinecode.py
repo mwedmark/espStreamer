@@ -653,3 +653,24 @@ def _build_streamer_prg():
 
 STREAMER_PRG = _build_streamer_prg()
 STREAMER_CRT = _build_streamer_crt()
+
+
+import os
+
+def build_wic64_viewer_prg(host_ip: str, host_port: int):
+    """Load pre-compiled WIC-64 C64 viewer PRG and patch IP configuration."""
+    prg_path = os.path.join(os.path.dirname(__file__), "wic64_viewer.prg")
+    with open(prg_path, "rb") as f:
+        prg_data = bytearray(f.read())
+    ip_str = f"{host_ip}:{host_port}"
+    if len(ip_str) > 21:
+        raise ValueError("IP string too long")
+    placeholder = b"192.168.000.000:00000"
+    idx = prg_data.find(placeholder)
+    if idx == -1:
+        raise ValueError("Could not find IP placeholder in PRG")
+    ip_bytes = ip_str.encode("ascii").ljust(21, b"\0")
+    prg_data[idx:idx+21] = ip_bytes
+    # Patch the length byte which is 2 bytes before the placeholder
+    prg_data[idx-2] = len(ip_str)
+    return bytes(prg_data)

@@ -8,6 +8,7 @@ import argparse
 import sys
 from backend_kungfu import KungFuFlashSerial
 from backend_vice import VICEKungFuSimulator
+from backend_wic64 import WIC64Backend
 from ws_server import run_server
 
 
@@ -25,7 +26,7 @@ Examples:
 
     parser.add_argument(
         "--backend",
-        choices=["kung_fu", "vice"],
+        choices=["kung_fu", "vice", "wic64"],
         default="kung_fu",
         help="Which backend to use (default: kung_fu)",
     )
@@ -50,6 +51,13 @@ Examples:
         help="VICE binary monitor port (only for VICE backend, default: 6511)",
     )
 
+    parser.add_argument(
+        "--wic64-port",
+        type=int,
+        default=8768,
+        help="WIC-64 TCP streaming port (only for wic64 backend, default: 8768)",
+    )
+
     args = parser.parse_args()
 
     # Create the appropriate backend
@@ -59,6 +67,10 @@ Examples:
     elif args.backend == "vice":
         backend = VICEKungFuSimulator()
         backend_name = f"VICE Emulator (port {args.vice_port})"
+    elif args.backend == "wic64":
+        backend = WIC64Backend(args.wic64_port)
+        backend.connect()
+        backend_name = f"WIC-64 WiFi Target (port {args.wic64_port})"
     else:
         print(f"Unknown backend: {args.backend}")
         sys.exit(1)
