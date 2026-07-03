@@ -659,6 +659,12 @@ import os
 
 def build_wic64_viewer_prg(host_ip: str, host_port: int):
     """Load pre-compiled WIC-64 C64 viewer PRG and patch IP configuration."""
+    # Always rebuild from assembly first to ensure the pristine placeholder exists
+    try:
+        import subprocess
+        subprocess.run(["acme", "wic64_viewer.asm"], cwd=os.path.dirname(__file__), capture_output=True)
+    except Exception as e:
+        pass
     prg_path = os.path.join(os.path.dirname(__file__), "wic64_viewer.prg")
     with open(prg_path, "rb") as f:
         prg_data = bytearray(f.read())
