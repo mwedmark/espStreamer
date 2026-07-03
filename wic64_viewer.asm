@@ -214,6 +214,9 @@ flip_buffer:
     eor #$01
     sta double_buf_flag
 
+    ; Send frame ACK to server to indicate the frame has been fully rendered
+    +wic64_execute tcp_ack_request, dummy_buffer
+
     jmp main_loop
 
 ; subroutine: apply_delta_pages

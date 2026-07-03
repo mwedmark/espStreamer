@@ -104,6 +104,7 @@ class WIC64Backend(StreamingBackend):
             try:
                 sock, addr = self.server_sock.accept()
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 2048)
                 print(f"WIC-64 Client connected from {addr}")
                 with self.lock:
                     if self.client_sock:
@@ -333,6 +334,13 @@ class WIC64Backend(StreamingBackend):
                             # Send page data (256 bytes)
                             send_chunk(f"page_{p_idx}_data", payload_view[curr_offset : curr_offset + 256])
                             curr_offset += 256
+
+                    # Wait for frame-level ACK from C64 client to prevent buffering lag
+                    self.client_sock.settimeout(5.0)
+                    ack = self.client_sock.recv(1)
+                    self.client_sock.settimeout(None)
+                    if not ack:
+                        raise socket.error("Empty ACK received (client disconnected).")
                 except Exception as socket_err:
                     print(f"WIC-64 socket send failed: {socket_err}. Client disconnected.")
                     try:
