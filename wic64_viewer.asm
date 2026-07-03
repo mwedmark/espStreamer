@@ -301,7 +301,7 @@ reliable_loop:
     bne reliable_loop
 
     ; Send ACK to server to indicate this chunk has been fully received
-    +wic64_execute tcp_ack_request, dummy_buffer
+    ;+wic64_execute tcp_ack_request, dummy_buffer
 
     rts
 

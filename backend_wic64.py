@@ -103,6 +103,7 @@ class WIC64Backend(StreamingBackend):
         while self.running:
             try:
                 sock, addr = self.server_sock.accept()
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 print(f"WIC-64 Client connected from {addr}")
                 with self.lock:
                     if self.client_sock:
@@ -297,30 +298,23 @@ class WIC64Backend(StreamingBackend):
                 try:
                     print(f"WIC-64 DEBUG: streaming frame {self.frame_count}. client={self.client_addr}, size={len(payload_view)}, used_delta={used_delta}")
                     
-                    def send_chunk_and_wait_ack(chunk_name, chunk):
+                    def send_chunk(chunk_name, chunk):
                         print(f"WIC-64 DEBUG: sending {chunk_name} ({len(chunk)} bytes)...")
                         self.client_sock.sendall(chunk)
-                        print(f"WIC-64 DEBUG: waiting for {chunk_name} ACK...")
-                        self.client_sock.settimeout(5.0)
-                        ack = self.client_sock.recv(1)
-                        self.client_sock.settimeout(None)
-                        if not ack:
-                            raise socket.error("Empty ACK received (client disconnected).")
-                        print(f"WIC-64 DEBUG: {chunk_name} ACK received ({ack})")
 
                     if not used_delta:
                         # Header (4 bytes)
-                        send_chunk_and_wait_ack("header", payload_view[0:4])
+                        send_chunk("header", payload_view[0:4])
                         
                         # Bitmap (8000 bytes)
-                        send_chunk_and_wait_ack("bitmap", payload_view[4:8004])
+                        send_chunk("bitmap", payload_view[4:8004])
                         
                         curr_offset = 8004
                         if send_screen:
-                            send_chunk_and_wait_ack("screen", payload_view[curr_offset : curr_offset + 1000])
+                            send_chunk("screen", payload_view[curr_offset : curr_offset + 1000])
                             curr_offset += 1000
                         if send_color:
-                            send_chunk_and_wait_ack("color", payload_view[curr_offset : curr_offset + 1000])
+                            send_chunk("color", payload_view[curr_offset : curr_offset + 1000])
                             curr_offset += 1000
                     else:
                         num_bitmap_pages = payload_view[3]
@@ -328,16 +322,16 @@ class WIC64Backend(StreamingBackend):
                         num_color_pages = payload_view[5]
                         total_pages = num_bitmap_pages + num_screen_pages + num_color_pages
                         
-                        send_chunk_and_wait_ack("delta_header", payload_view[0:4])
-                        send_chunk_and_wait_ack("delta_ext_header", payload_view[4:8])
+                        send_chunk("delta_header", payload_view[0:4])
+                        send_chunk("delta_ext_header", payload_view[4:8])
                         
                         curr_offset = 8
                         for p_idx in range(total_pages):
                             # Send page header (4 bytes)
-                            send_chunk_and_wait_ack(f"page_{p_idx}_header", payload_view[curr_offset : curr_offset + 4])
+                            send_chunk(f"page_{p_idx}_header", payload_view[curr_offset : curr_offset + 4])
                             curr_offset += 4
                             # Send page data (256 bytes)
-                            send_chunk_and_wait_ack(f"page_{p_idx}_data", payload_view[curr_offset : curr_offset + 256])
+                            send_chunk(f"page_{p_idx}_data", payload_view[curr_offset : curr_offset + 256])
                             curr_offset += 256
                 except Exception as socket_err:
                     print(f"WIC-64 socket send failed: {socket_err}. Client disconnected.")
