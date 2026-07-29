@@ -87,3 +87,6 @@ After that it will listen to the same stuff that the VICE-app does:
 - "Send Image" choose the correct graphics mode and receives a single image.
 
 You switch between image/Stream mode at any time and you can also change type of image and C64/VICE should follow by changing modes.
+
+And a gallery of images and videos from the implementation phase:
+
