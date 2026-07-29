@@ -43,7 +43,7 @@ TIP: A cool demo, that I use a lot, is to visit 3d-page that shows different 3d 
 
 ## SETTINGS
 To change the parameters for the actual stream you need to open the "start.bat" file in a text editor and change them manually and then restart the script.
-Resolution (320x200 or 160x200 being the best alternatives) , Frames Per Second (5 to 30 maybe good) and bitrate (400 to 2000 is good values) are the most usuable parameters that can make a difference.
+Resolution (320x200 or 160x200 being the best alternatives) , Frames Per Second (5 to 30 maybe good) and bitrate (400 to 2000 is good values) are the most usuable parameters that can make a differ[...]
 
 In the web app you can change:
 - ESP32 IP Address (I should add some local DNS name here so it can find it itself)
@@ -59,7 +59,7 @@ In the web app you can change:
 The web app has 2 dinstinct ways of creating output C64 files:
 - A single image mode which just sets the correct color mode and show the image. Both PRG and CRT can be created.
 - A slideshow C64 app that takes all your CAPTURED images and shows them continously and in a loop.
-- IDEA: There will also be a animation mode which saves images as fast as possible until the CRT are full (about 100 unpacked full koala images) and then creates a C64 animation app that just shows the animation. Like the slideshow but without pause between images.
+- IDEA: There will also be a animation mode which saves images as fast as possible until the CRT are full (about 100 unpacked full koala images) and then creates a C64 animation app that just show[...]
 
 ## THE BOTTOM PART - HARDWARE CONTROL PART
 
@@ -76,12 +76,12 @@ Description on how to get hardware working:
 VICE flow:
 To get VICE working you need to make sure to enable the binary machine monitor at port 6511 which is currently hard-coded in EspStreamer
 So start VICE and enable monitor, then choose VICE as alternative and click "CONNECT". It should now be connected to VICE.
-Via this port it can pause and inject memory changes into C64 and then release it to update graphics. When running streaming, we do this at a default rate if 10 fps (every 100ms) which seem to work ok.
+Via this port it can pause and inject memory changes into C64 and then release it to update graphics. When running streaming, we do this at a default rate if 10 fps (every 100ms) which seem to wor[...]
 We also support sending changes to graphics modes, which makes the C64 mirror the current format you've chosen in the web app. You can also just send an image as a screen shot.
 
 C64+Kung Fu Flash flow:
 You need to make sure to connect you're Kung Fu Flash to the C64 and start the machine and stay in the Kung Fu Flash menu for the USB-connection to be open.
-Choose Kung Fu Flash in the menu and click "CONNECT", it should now say connected. Then you choose to send "Viewer PRG over USB". This will make C64 update screen and actually receive and execute the viewer app.
+Choose Kung Fu Flash in the menu and click "CONNECT", it should now say connected. Then you choose to send "Viewer PRG over USB". This will make C64 update screen and actually receive and execute [...]
 After that it will listen to the same stuff that the VICE-app does:
 - "Start Stream" will make the C64 go into correct graphics mode and just wait for incoming images.
 - "Send Image" choose the correct graphics mode and receives a single image.
@@ -90,3 +90,33 @@ You switch between image/Stream mode at any time and you can also change type of
 
 And a gallery of images and videos from the implementation phase:
 
+## Gallery
+I've added a docs/images/ folder (on this branch) for you to store example screenshots, photos or demo GIFs. Add your image files there and reference them from this README. Below are sample Markdown entries you can copy-paste.
+
+Sample image references (replace with your files):
+
+![Demo 1](docs/images/demo1.png)
+
+![Demo 2](docs/images/demo2.jpg)
+
+Inline HTML thumbnail example (for better layout control):
+
+<p align="center">
+  <img src="docs/images/demo1.png" alt="Demo 1" width="320" />
+  <img src="docs/images/demo2.jpg" alt="Demo 2" width="320" />
+</p>
+
+How to add images:
+- Copy image files into docs/images/ (PNG, JPG, GIF). Keep file sizes reasonable; optimize for web when possible.
+- Commit them on a branch and open a PR. Example Git commands:
+
+  git checkout -b add-docs-images
+  mkdir -p docs/images
+  cp /path/to/demo1.png docs/images/
+  git add docs/images/demo1.png docs/README.md
+  git commit -m "docs: add gallery image(s)"
+  git push origin add-docs-images
+
+- For files >100 MB use Git LFS.
+
+Feel free to tell me any images you'd like me to add, or I can open a PR to add real sample images if you upload them here.
