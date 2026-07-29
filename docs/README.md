@@ -43,7 +43,7 @@ TIP: A cool demo, that I use a lot, is to visit 3d-page that shows different 3d 
 
 ## SETTINGS
 To change the parameters for the actual stream you need to open the "start.bat" file in a text editor and change them manually and then restart the script.
-Resolution (320x200 or 160x200 being the best alternatives) , Frames Per Second (5 to 30 maybe good) and bitrate (400 to 2000 is good values) are the most usuable parameters that can make a differ[...]
+Resolution (320x200 or 160x200 being the best alternatives) , Frames Per Second (5 to 30 maybe good) and bitrate (400 to 2000 is good values) are the most usuable parameters that can make a differ[...[...]
 
 In the web app you can change:
 - ESP32 IP Address (I should add some local DNS name here so it can find it itself)
@@ -59,7 +59,7 @@ In the web app you can change:
 The web app has 2 dinstinct ways of creating output C64 files:
 - A single image mode which just sets the correct color mode and show the image. Both PRG and CRT can be created.
 - A slideshow C64 app that takes all your CAPTURED images and shows them continously and in a loop.
-- IDEA: There will also be a animation mode which saves images as fast as possible until the CRT are full (about 100 unpacked full koala images) and then creates a C64 animation app that just show[...]
+- IDEA: There will also be a animation mode which saves images as fast as possible until the CRT are full (about 100 unpacked full koala images) and then creates a C64 animation app that just show[...[...]
 
 ## THE BOTTOM PART - HARDWARE CONTROL PART
 
@@ -76,12 +76,12 @@ Description on how to get hardware working:
 VICE flow:
 To get VICE working you need to make sure to enable the binary machine monitor at port 6511 which is currently hard-coded in EspStreamer
 So start VICE and enable monitor, then choose VICE as alternative and click "CONNECT". It should now be connected to VICE.
-Via this port it can pause and inject memory changes into C64 and then release it to update graphics. When running streaming, we do this at a default rate if 10 fps (every 100ms) which seem to wor[...]
+Via this port it can pause and inject memory changes into C64 and then release it to update graphics. When running streaming, we do this at a default rate if 10 fps (every 100ms) which seem to wor[...[...]
 We also support sending changes to graphics modes, which makes the C64 mirror the current format you've chosen in the web app. You can also just send an image as a screen shot.
 
 C64+Kung Fu Flash flow:
 You need to make sure to connect you're Kung Fu Flash to the C64 and start the machine and stay in the Kung Fu Flash menu for the USB-connection to be open.
-Choose Kung Fu Flash in the menu and click "CONNECT", it should now say connected. Then you choose to send "Viewer PRG over USB". This will make C64 update screen and actually receive and execute [...]
+Choose Kung Fu Flash in the menu and click "CONNECT", it should now say connected. Then you choose to send "Viewer PRG over USB". This will make C64 update screen and actually receive and execute [...[...]
 After that it will listen to the same stuff that the VICE-app does:
 - "Start Stream" will make the C64 go into correct graphics mode and just wait for incoming images.
 - "Send Image" choose the correct graphics mode and receives a single image.
@@ -91,31 +91,192 @@ You switch between image/Stream mode at any time and you can also change type of
 And a gallery of images and videos from the implementation phase:
 
 ## Gallery
-I've added a docs/images/ folder (on this branch) for you to store example screenshots, photos or demo GIFs. Add your image files there and reference them from this README. Below are sample Markdown entries you can copy-paste.
 
-Sample image references (replace with your files):
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; padding: 20px 0;">
 
-![Demo 1](docs/images/demo1.png)
+<!-- Videos -->
+<div style="text-align: center;">
+  <a href="docs/images/C64VidDig.mp4" target="_blank">
+    <video width="280" height="auto" style="border: 1px solid #ccc; border-radius: 4px;" poster="">
+      <source src="docs/images/C64VidDig.mp4" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
+  </a>
+  <p><strong>C64VidDig.mp4</strong><br><small>Video Demo</small></p>
+</div>
 
-![Demo 2](docs/images/demo2.jpg)
+<div style="text-align: center;">
+  <a href="docs/images/LastDemo_KFFLive_20260517_185933.mp4" target="_blank">
+    <video width="280" height="auto" style="border: 1px solid #ccc; border-radius: 4px;" poster="">
+      <source src="docs/images/LastDemo_KFFLive_20260517_185933.mp4" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
+  </a>
+  <p><strong>LastDemo_KFFLive</strong><br><small>Latest Live Demo (May 2026)</small></p>
+</div>
 
-Inline HTML thumbnail example (for better layout control):
+<!-- Images -->
+<div style="text-align: center;">
+  <a href="docs/images/CartoonCar.webp" target="_blank">
+    <img src="docs/images/CartoonCar.webp" alt="CartoonCar" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>CartoonCar</strong><br><small>Cartoon Car Demo</small></p>
+</div>
 
-<p align="center">
-  <img src="docs/images/demo1.png" alt="Demo 1" width="320" />
-  <img src="docs/images/demo2.jpg" alt="Demo 2" width="320" />
-</p>
+<div style="text-align: center;">
+  <a href="docs/images/CombinedWebApp&VICE.webp" target="_blank">
+    <img src="docs/images/CombinedWebApp&VICE.webp" alt="CombinedWebApp&VICE" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Combined WebApp & VICE</strong><br><small>WebApp with VICE Emulator</small></p>
+</div>
 
-How to add images:
-- Copy image files into docs/images/ (PNG, JPG, GIF). Keep file sizes reasonable; optimize for web when possible.
+<div style="text-align: center;">
+  <a href="docs/images/EarlySettingsHR.webp" target="_blank">
+    <img src="docs/images/EarlySettingsHR.webp" alt="EarlySettingsHR" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Early Settings HR</strong><br><small>High Resolution Settings</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/EarlySettingsMC.webp" target="_blank">
+    <img src="docs/images/EarlySettingsMC.webp" alt="EarlySettingsMC" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Early Settings MC</strong><br><small>Multicolor Settings</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/Earlyimage.webp" target="_blank">
+    <img src="docs/images/Earlyimage.webp" alt="Earlyimage" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Early Image 1</strong><br><small>Early Development</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/Earlyimage2.webp" target="_blank">
+    <img src="docs/images/Earlyimage2.webp" alt="Earlyimage2" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Early Image 2</strong><br><small>Early Development Phase 2</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/FiatEarlyIFLI.webp" target="_blank">
+    <img src="docs/images/FiatEarlyIFLI.webp" alt="FiatEarlyIFLI" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Fiat Early IFLI</strong><br><small>IFLI Mode - Fiat</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/FirstColorImage.webp" target="_blank">
+    <img src="docs/images/FirstColorImage.webp" alt="FirstColorImage" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>First Color Image</strong><br><small>First Successful Color Output</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/FirstWorkingPRG.webp" target="_blank">
+    <img src="docs/images/FirstWorkingPRG.webp" alt="FirstWorkingPRG" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>First Working PRG</strong><br><small>First Functional PRG File</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/ForzaFullScreen.webp" target="_blank">
+    <img src="docs/images/ForzaFullScreen.webp" alt="ForzaFullScreen" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Forza Full Screen</strong><br><small>Forza Racing Game Stream</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/KoalaViewerDemo.webp" target="_blank">
+    <img src="docs/images/KoalaViewerDemo.webp" alt="KoalaViewerDemo" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Koala Viewer Demo</strong><br><small>Koala Format Viewer</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/MonsterEarlyIFLI.webp" target="_blank">
+    <img src="docs/images/MonsterEarlyIFLI.webp" alt="MonsterEarlyIFLI" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Monster Early IFLI</strong><br><small>IFLI Mode - Monster</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/PassatBW.webp" target="_blank">
+    <img src="docs/images/PassatBW.webp" alt="PassatBW" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Passat Black & White</strong><br><small>B&W Dithering Demo</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/SUVImage.webp" target="_blank">
+    <img src="docs/images/SUVImage.webp" alt="SUVImage" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>SUV Image</strong><br><small>SUV Stream Capture</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/SwedishLiveTV.webp" target="_blank">
+    <img src="docs/images/SwedishLiveTV.webp" alt="SwedishLiveTV" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Swedish Live TV</strong><br><small>Live TV Stream Demo</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/Tiger.webp" target="_blank">
+    <img src="docs/images/Tiger.webp" alt="Tiger" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Tiger</strong><br><small>Tiger Image Demo</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/Volvo240EarlyFLI.webp" target="_blank">
+    <img src="docs/images/Volvo240EarlyFLI.webp" alt="Volvo240EarlyFLI" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Volvo 240 Early FLI</strong><br><small>FLI Mode - Volvo 240</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/imageCarBWDither.webp" target="_blank">
+    <img src="docs/images/imageCarBWDither.webp" alt="imageCarBWDither" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Car B&W Dither</strong><br><small>B&W Dithering - Car</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/imageCarColorDither.webp" target="_blank">
+    <img src="docs/images/imageCarColorDither.webp" alt="imageCarColorDither" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Car Color Dither</strong><br><small>Color Dithering - Car</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/imageVICE.webp" target="_blank">
+    <img src="docs/images/imageVICE.webp" alt="imageVICE" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>VICE Emulator</strong><br><small>VICE Emulator Integration</small></p>
+</div>
+
+<div style="text-align: center;">
+  <a href="docs/images/imageWeb.webp" target="_blank">
+    <img src="docs/images/imageWeb.webp" alt="imageWeb" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+  </a>
+  <p><strong>Web Interface</strong><br><small>Web App Interface</small></p>
+</div>
+
+</div>
+
+### How to add images:
+- Copy image files into docs/images/ (PNG, JPG, GIF, WEBP). Keep file sizes reasonable; optimize for web when possible.
 - Commit them on a branch and open a PR. Example Git commands:
 
+  ```bash
   git checkout -b add-docs-images
   mkdir -p docs/images
   cp /path/to/demo1.png docs/images/
   git add docs/images/demo1.png docs/README.md
   git commit -m "docs: add gallery image(s)"
   git push origin add-docs-images
+  ```
 
 - For files >100 MB use Git LFS.
 
