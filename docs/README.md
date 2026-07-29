@@ -81,7 +81,7 @@ We also support sending changes to graphics modes, which makes the C64 mirror th
 
 C64+Kung Fu Flash flow:
 You need to make sure to connect you're Kung Fu Flash to the C64 and start the machine and stay in the Kung Fu Flash menu for the USB-connection to be open.
-Choose Kung Fu Flash in the menu and click "CONNECT", it should now say connected. Then you choose to send "Viewer PRG over USB". This will make C64 update screen and actually receive and execute [...]
+Choose Kung Fu Flash in the menu and click "CONNECT", it should now say connected. Then you choose to send "Viewer PRG over USB". This will make C64 update screen and actually receive and execute [...[...]
 After that it will listen to the same stuff that the VICE-app does:
 - "Start Stream" will make the C64 go into correct graphics mode and just wait for incoming images.
 - "Send Image" choose the correct graphics mode and receives a single image.
