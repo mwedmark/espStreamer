@@ -94,177 +94,70 @@ And a gallery of images and videos from the implementation phase:
 
 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; padding: 20px 0; align-items: start; justify-items: center;">
 
-<!-- Videos -->
-<div style="text-align: center;">
-  <a href="images/C64VidDig.mp4" target="_blank">
-    <video width="280" height="auto" style="border: 1px solid #ccc; border-radius: 4px;" poster="">
-      <source src="images/C64VidDig.mp4" type="video/mp4">
-      Your browser does not support the video tag.
-    </video>
-  </a>
-  <p><strong>C64VidDig.mp4</strong><br><small>Video Demo</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/LastDemo_KFFLive_20260517_185933.mp4" target="_blank">
-    <video width="280" height="auto" style="border: 1px solid #ccc; border-radius: 4px;" poster="">
-      <source src="images/LastDemo_KFFLive_20260517_185933.mp4" type="video/mp4">
-      Your browser does not support the video tag.
-    </video>
-  </a>
-  <p><strong>LastDemo_KFFLive</strong><br><small>Latest Live Demo (May 2026)</small></p>
-</div>
-
-<!-- Images -->
-<div style="text-align: center;">
   <a href="images/CartoonCar.webp" target="_blank">
-    <img src="images/CartoonCar.webp" alt="CartoonCar" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+    <img src="images/CartoonCar.webp" alt="CartoonCar" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>CartoonCar</strong><br><small>Cartoon Car Demo</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/CombinedWebApp&VICE.webp" target="_blank">
-    <img src="images/CombinedWebApp&VICE.webp" alt="CombinedWebApp&VICE" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/CombinedWebApp&VICE.webp" target="_blank">
+    <img src="images/CombinedWebApp&VICE.webp" alt="CartoonCar" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Combined WebApp & VICE</strong><br><small>WebApp with VICE Emulator</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/EarlySettingsHR.webp" target="_blank">
-    <img src="images/EarlySettingsHR.webp" alt="EarlySettingsHR" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/EarlySettingsHR.webp" target="_blank">
+    <img src="images/EarlySettingsHR.webp" alt="EarlySettingsHR.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Early Settings HR</strong><br><small>High Resolution Settings</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/EarlySettingsMC.webp" target="_blank">
-    <img src="images/EarlySettingsMC.webp" alt="EarlySettingsMC" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/EarlySettingsMC.webp" target="_blank">
+    <img src="images/EarlySettingsMC.webp" alt="EarlySettingsMC.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Early Settings MC</strong><br><small>Multicolor Settings</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/Earlyimage.webp" target="_blank">
-    <img src="images/Earlyimage.webp" alt="Earlyimage" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/Earlyimage.webp" target="_blank">
+    <img src="images/Earlyimage.webp" alt="Earlyimage.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Early Image 1</strong><br><small>Early Development</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/Earlyimage2.webp" target="_blank">
-    <img src="images/Earlyimage2.webp" alt="Earlyimage2" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/Earlyimage2.webp" target="_blank">
+    <img src="images/Earlyimage2.webp" alt="Earlyimage2.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Early Image 2</strong><br><small>Early Development Phase 2</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/FiatEarlyIFLI.webp" target="_blank">
-    <img src="images/FiatEarlyIFLI.webp" alt="FiatEarlyIFLI" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/FiatEarlyIFLI.webp" target="_blank">
+    <img src="images/FiatEarlyIFLI.webp" alt="FiatEarlyIFLI.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Fiat Early IFLI</strong><br><small>IFLI Mode - Fiat</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/FirstColorImage.webp" target="_blank">
-    <img src="images/FirstColorImage.webp" alt="FirstColorImage" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/FirstColorImage.webp" target="_blank">
+    <img src="images/FirstColorImage.webp" alt="FirstColorImage.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>First Color Image</strong><br><small>First Successful Color Output</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/FirstWorkingPRG.webp" target="_blank">
-    <img src="images/FirstWorkingPRG.webp" alt="FirstWorkingPRG" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/FirstWorkingPRG.webp" target="_blank">
+    <img src="images/FirstWorkingPRG.webp" alt="FirstWorkingPRG.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>First Working PRG</strong><br><small>First Functional PRG File</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/ForzaFullScreen.webp" target="_blank">
-    <img src="images/ForzaFullScreen.webp" alt="ForzaFullScreen" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/ForzaFullScreen.webp" target="_blank">
+    <img src="images/ForzaFullScreen.webp" alt="ForzaFullScreen.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Forza Full Screen</strong><br><small>Forza Racing Game Stream</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/KoalaViewerDemo.webp" target="_blank">
-    <img src="images/KoalaViewerDemo.webp" alt="KoalaViewerDemo" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/KoalaViewerDemo.webp" target="_blank">
+    <img src="images/KoalaViewerDemo.webp" alt="KoalaViewerDemo.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Koala Viewer Demo</strong><br><small>Koala Format Viewer</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/MonsterEarlyIFLI.webp" target="_blank">
-    <img src="images/MonsterEarlyIFLI.webp" alt="MonsterEarlyIFLI" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/MonsterEarlyIFLI.webp" target="_blank">
+    <img src="images/MonsterEarlyIFLI.webp" alt="MonsterEarlyIFLI.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Monster Early IFLI</strong><br><small>IFLI Mode - Monster</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/PassatBW.webp" target="_blank">
-    <img src="images/PassatBW.webp" alt="PassatBW" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/PassatBW.webp" target="_blank">
+    <img src="images/PassatBW.webp" alt="PassatBW.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Passat Black & White</strong><br><small>B&W Dithering Demo</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/SUVImage.webp" target="_blank">
-    <img src="images/SUVImage.webp" alt="SUVImage" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/SUVImage.webp" target="_blank">
+    <img src="images/SUVImage.webp" alt="SUVImage.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>SUV Image</strong><br><small>SUV Stream Capture</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/SwedishLiveTV.webp" target="_blank">
-    <img src="images/SwedishLiveTV.webp" alt="SwedishLiveTV" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/SwedishLiveTV.webp" target="_blank">
+    <img src="images/SwedishLiveTV.webp" alt="SwedishLiveTV.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Swedish Live TV</strong><br><small>Live TV Stream Demo</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/Tiger.webp" target="_blank">
-    <img src="images/Tiger.webp" alt="Tiger" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/Tiger.webp" target="_blank">
+    <img src="images/Tiger.webp" alt="Tiger.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Tiger</strong><br><small>Tiger Image Demo</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/Volvo240EarlyFLI.webp" target="_blank">
-    <img src="images/Volvo240EarlyFLI.webp" alt="Volvo240EarlyFLI" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/Volvo240EarlyFLI.webp" target="_blank">
+    <img src="images/Volvo240EarlyFLI.webp" alt="Volvo240EarlyFLI.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Volvo 240 Early FLI</strong><br><small>FLI Mode - Volvo 240</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/imageCarBWDither.webp" target="_blank">
-    <img src="images/imageCarBWDither.webp" alt="imageCarBWDither" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+   <a href="images/imageCarBWDither.webp" target="_blank">
+    <img src="images/imageCarBWDither.webp" alt="imageCarBWDither.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Car B&W Dither</strong><br><small>B&W Dithering - Car</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/imageCarColorDither.webp" target="_blank">
-    <img src="images/imageCarColorDither.webp" alt="imageCarColorDither" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
+    <a href="images/imageCarColorDither.webp" target="_blank">
+    <img src="images/imageCarColorDither.webp" alt="imageCarColorDither.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
+   </a>
+    <a href="images/imageVICE.webp" target="_blank">
+    <img src="images/imageVICE.webp" alt="imageVICE.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
+   </a>
+    <a href="images/imageWeb.webp" target="_blank">
+    <img src="images/imageWeb.webp" alt="imageWeb.webp" width="260" style="border: 1px solid #ccc; border-radius: 4px;" />
   </a>
-  <p><strong>Car Color Dither</strong><br><small>Color Dithering - Car</small></p>
 </div>
-
-<div style="text-align: center;">
-  <a href="images/imageVICE.webp" target="_blank">
-    <img src="images/imageVICE.webp" alt="imageVICE" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
-  </a>
-  <p><strong>VICE Emulator</strong><br><small>VICE Emulator Integration</small></p>
-</div>
-
-<div style="text-align: center;">
-  <a href="images/imageWeb.webp" target="_blank">
-    <img src="images/imageWeb.webp" alt="imageWeb" width="280" style="border: 1px solid #ccc; border-radius: 4px;" />
-  </a>
-  <p><strong>Web Interface</strong><br><small>Web App Interface</small></p>
-</div>
-
-</div>
-
 ### How to add images:
 - Copy image files into images/ (PNG, JPG, GIF, WEBP). Keep file sizes reasonable; optimize for web when possible.
 - Commit them on a branch and open a PR. Example Git commands:
