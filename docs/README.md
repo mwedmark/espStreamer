@@ -2,8 +2,7 @@
 Started as an Arduino-based project for Chrome/ESP32-S3 to make it handle a live stream and convert it to C64 compatible image.
 Going forward the ESP32 is actually not needed but still supported. See below 
 It can create either PRG/CRT files which holds both the viewer and the actual image data or a KOA-file which is just the image data.
-It can also create small slideshows of maximum 3 images in a PRG/CRT file.
-NOTE: CRT export still has bugs after the 2 first images. Needs more work.
+It can also create slideshows in a PRG/CRT file.
 
 This solution uses a webapp for control/view from a webbrowser(tested on Chrome) and also uses Python script where applicable.
 It is also possible to run this without a ESP32. In this case only a Python environment and webbrowser is needed.
