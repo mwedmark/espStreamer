@@ -30,10 +30,10 @@ You switch hosting model using the buttons on top: "ESP32 / Locally".
 
 Instructions:
 - Run the Start command to start the main streaming part of the app.
-The powershell script tries to select the left-most screen of your desktop and start a VLC stream for that screen, regardless of resolution. In my case I have a 2560x1440 monitor there.
-It then scales that down to 160x200 (C64 multicolor resolution), caps it to a resonable biterate and waits for incoming clients.
+The PowerShell script tries to select the left-most screen of your desktop and start a VLC stream for that screen, regardless of resolution. In my case I have a 2560x1440 monitor there.
+It then scales that down to 160x200 (C64 multi-color resolution), caps it to a resonable bitrate and waits for incoming clients.
 
-The web app should then start and you should see a downscaled version of you desktop directly in the browser if everythins worked.
+The web app should then start and you should see a down-scaled version of you desktop directly in the browser if everything worked.
 As a trouble-shoot step you can start another VLC instance as a client and connect to network Stream at: @:90/mjpeg.X 
 You should see the live stream running.
 NOTE: You should be running all clients (web or VLC) in a second screen to not get the classic picture-in-picture problem.
@@ -42,10 +42,10 @@ TIP: A cool demo, that I use a lot, is to visit 3d-page that shows different 3d 
 
 ## SETTINGS
 To change the parameters for the actual stream you need to open the "start.bat" file in a text editor and change them manually and then restart the script.
-Resolution (320x200 or 160x200 being the best alternatives) , Frames Per Second (5 to 30 maybe good) and bitrate (400 to 2000 is good values) are the most usuable parameters that can make a differ[...]
+Resolution (320x200 or 160x200 being the best alternatives) , Frames Per Second (5 to 30 maybe good) and bitrate (400 to 2000 is good values) are the most usable parameters that can make a difference
 
 In the web app you can change:
-- ESP32 IP Address (I should add some local DNS name here so it can find it itself)
+- ESP32 IP Address or always use the added local DNS: http://c64streamer.local
 - Image formats
 - Output formats: PRG/KOA/CRT
 - Dither algorithm and strength
@@ -55,10 +55,10 @@ In the web app you can change:
 - Choose background color, can optimize some images to look much better
 
 ## OUTPUT - WHAT DOES IT ACTUALLY DO?
-The web app has 2 dinstinct ways of creating output C64 files:
+The web app has 2 distinct ways of creating output C64 files:
 - A single image mode which just sets the correct color mode and show the image. Both PRG and CRT can be created.
-- A slideshow C64 app that takes all your CAPTURED images and shows them continously and in a loop.
-- IDEA: There will also be a animation mode which saves images as fast as possible until the CRT are full (about 100 unpacked full koala images) and then creates a C64 animation app that just show[...]
+- A slideshow C64 app that takes all your CAPTURED images and shows them continuously and in a loop.
+- There is also an animation mode which saves images as fast as possible until the CRT are full (about 100-150 unpacked full koala images) and then creates a C64 animation app that just show th4e animation.
 
 ## THE BOTTOM PART - HARDWARE CONTROL PART
 
@@ -67,7 +67,7 @@ Information shown is:
 - FPS: Total Frames per Second this instant
 - Total: Number of bytes transferred in total through the link.
 
-You can choose between connecting to a already started instance of VICE or conneting to a running C64 via Kung Fu Flash 1/2 USB-connection.
+You can choose between connecting to a already started instance of VICE or connecting to a running C64 via Kung Fu Flash 1/2 USB-connection.
 
 ## HOW TO START STREAMING
 Description on how to get hardware working:
@@ -75,7 +75,7 @@ Description on how to get hardware working:
 VICE flow:
 To get VICE working you need to make sure to enable the binary machine monitor at port 6511 which is currently hard-coded in EspStreamer
 So start VICE and enable monitor, then choose VICE as alternative and click "CONNECT". It should now be connected to VICE.
-Via this port it can pause and inject memory changes into C64 and then release it to update graphics. When running streaming, we do this at a default rate if 10 fps (every 100ms) which seem to wor[...]
+Via this port it can pause and inject memory changes into C64 and then release it to update graphics. When running streaming, we do this at a default rate if 10 fps (every 100ms) which seem to work
 We also support sending changes to graphics modes, which makes the C64 mirror the current format you've chosen in the web app. You can also just send an image as a screen shot.
 
 C64+Kung Fu Flash flow:
